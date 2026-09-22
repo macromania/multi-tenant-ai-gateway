@@ -31,7 +31,7 @@ class Workflows(unittest.TestCase):
         script = self.bin / "fake_tool.py"
         shutil.copy2(ROOT / "tests/fake_tool.py", script)
         script.chmod(0o755)
-        for name in ("docker", "kind", "kubectl", "helm", "curl", "lsof", "az", "sleep"):
+        for name in ("docker", "kind", "kubectl", "k9s", "helm", "curl", "lsof", "az", "sleep"):
             (self.bin / name).symlink_to(script)
         self.env = {**os.environ, "PATH": str(self.bin) + ":" + os.environ["PATH"],
                     "FIXTURE_ROOT": str(self.root), "NO_COLOR": "1"}
@@ -69,6 +69,7 @@ class Workflows(unittest.TestCase):
         result = self.run_make("help")
         for heading in ("LOCAL ENVIRONMENT", "FOUNDRY MODEL", "PROMPTING", "DIAGNOSTICS", "CLEANUP"):
             self.assertIn(heading, result.stdout)
+        self.assertIn("make k9s", result.stdout)
         self.assertNotIn("\x1b", result.stdout + result.stderr)
         self.assertFalse((self.state / "cluster.json").exists())
 
@@ -120,6 +121,24 @@ class Workflows(unittest.TestCase):
         result = self.run_make("logs", success=False, env={"MOCK_WRONG_CONTEXT": "1"})
         self.assertIn("Never falling back", result.stderr)
 
+    def test_k9s_uses_project_context_and_propagates_failure(self):
+        self.up()
+        self.run_make("k9s")
+        calls = [call for call in self.calls() if call["tool"] == "k9s"]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["args"], [
+            "--kubeconfig", str(self.state / "kubeconfig"),
+            "--context", "kind-multi-tenant-ai-gateway",
+        ])
+        self.run_make("k9s", success=False, env={"MOCK_K9S_EXIT": "7"})
+
+    def test_k9s_refuses_missing_or_wrong_kubeconfig(self):
+        self.up()
+        self.run_make("k9s", success=False, env={"MOCK_WRONG_CONTEXT": "1"})
+        (self.state / "kubeconfig").unlink()
+        self.run_make("k9s", success=False)
+        self.assertFalse(any(call["tool"] == "k9s" for call in self.calls()))
+
     def test_chart_failure_is_not_success(self):
         self.run_make("up", success=False, env={"MOCK_HELM_FAIL": "1"})
 
@@ -151,6 +170,25 @@ class Workflows(unittest.TestCase):
         self.run_make("foundry-models", "REGION=eastus2", success=False, env={"MOCK_NO_CAPACITY": "1"})
         self.assertFalse((self.state / "foundry.json").exists())
 
+    def test_model_discovery_includes_large_and_compact_chat_models(self):
+        result = self.run_make("foundry-models", "REGION=eastus2", env={"MOCK_LARGE_MODELS": "1"})
+        output = result.stdout + result.stderr
+        for model in ("gpt-5", "gpt-5.4", "gpt-5.6-sol", "gpt-6-astra", "gpt-5-mini", "gpt-5-nano"):
+            self.assertIn(model + " / ", output)
+        for excluded in ("gpt-audio", "gpt-4o-audio", "gpt-4o-realtime", "gpt-5-codex",
+                         "gpt-4.1", "gpt-6-preview", "model-router"):
+            self.assertNotIn(excluded, output)
+        self.assertFalse((self.state / "foundry.json").exists())
+
+    def test_larger_model_can_be_selected_and_configured(self):
+        self.up()
+        self.run_make("foundry-up", "REGION=eastus2", "MODEL=gpt-5.4", "MODEL_VERSION=2026-03-05",
+                      "SKU=GlobalStandard", "CAPACITY=1", "CONFIRM=1", env={"MOCK_LARGE_MODELS": "1"})
+        record = json.loads((self.state / "foundry.json").read_text())
+        self.assertEqual(record["model"], "gpt-5.4")
+        self.assertEqual(record["phase"], "configured")
+        self.assertIn("AZURE_MODEL_NAME=gpt-5.4\n", (self.root / ".env").read_text())
+
     def test_cloud_setup_secret_handling_and_scoping(self):
         self.up()
         result = self.foundry_up()
@@ -165,6 +203,44 @@ class Workflows(unittest.TestCase):
                     ["account", "show"], ["cloud", "show"]):
                 self.assertIn("--subscription", call["args"])
         self.assertFalse(list(self.state.glob("tmp.*")))
+
+    def test_creation_applies_account_scoped_api_key_policy_exception(self):
+        self.up()
+        result = self.run_make("foundry-up", "REGION=eastus2", "MODEL=gpt-5-nano",
+                               "MODEL_VERSION=2025-08-07", "SKU=GlobalStandard", "CAPACITY=1",
+                               "CONFIRM=1", env={"MOCK_LOCAL_AUTH_POLICY": "1"})
+        request = json.loads(self.mock.read_text())["account_request"]
+        record = json.loads((self.state / "foundry.json").read_text())
+        self.assertEqual(request["tags"]["SecurityControl"], "Ignore")
+        self.assertEqual(request["tags"]["agentgatewayProjectId"], record["owner"])
+        self.assertFalse(request["properties"]["disableLocalAuth"])
+        self.assertIn("SecurityControl=Ignore", result.stderr)
+        group_create = next(call for call in self.calls()
+                            if call["tool"] == "az" and call["args"][:2] == ["group", "create"])
+        self.assertNotIn("SecurityControl=Ignore", group_create["args"])
+
+    def test_disabled_local_auth_has_specific_error_and_stops_before_keys(self):
+        self.up()
+        result = self.run_make("foundry-up", "REGION=eastus2", "MODEL=gpt-5-nano",
+                               "MODEL_VERSION=2025-08-07", "SKU=GlobalStandard", "CAPACITY=1",
+                               "CONFIRM=1", success=False, env={"MOCK_LOCAL_AUTH_DISABLED": "1"})
+        self.assertIn("disableLocalAuth=true", result.stderr)
+        self.assertNotIn("settings/ownership differ", result.stderr)
+        self.assertFalse(any(call["tool"] == "az" and
+                             call["args"][:4] == ["cognitiveservices", "account", "keys", "list"]
+                             for call in self.calls()))
+        self.assertFalse((self.root / ".env").exists())
+
+    def test_cloud_setup_retry_uses_project_resource_id(self):
+        self.up()
+        self.foundry_up()
+        before = json.loads((self.state / "foundry.json").read_text())
+        self.foundry_up()
+        self.assertEqual(before, json.loads((self.state / "foundry.json").read_text()))
+        project_creates = [call for call in self.calls() if call["tool"] == "az" and
+                           call["args"][:3] == ["rest", "--method", "put"] and
+                           "/projects/" in call["args"][call["args"].index("--url") + 1]]
+        self.assertEqual(len(project_creates), 1)
 
     def test_prompt_is_literal_and_json_stdout_is_clean(self):
         self.up()

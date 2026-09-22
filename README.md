@@ -22,6 +22,12 @@ The project uses its own kubeconfig and Kind cluster. It does not change your
 current Kubernetes context, Docker context, or Azure subscription. Local startup
 does not call Azure or deploy a model.
 
+With K9s installed, browse the project cluster using its local kubeconfig:
+
+```bash
+make k9s
+```
+
 ## Connect a model
 
 Azure CLI 2.80 or later and an active `az login` are required.

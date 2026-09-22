@@ -8,6 +8,7 @@ The scripts support macOS's `/bin/bash` and GNU Make 3.81.
 The offline test runner additionally uses Python 3's standard library.
 No Python environment, SDK package, azd extension, container build, or Node.js
 installation is needed to run the gateway.
+K9s is optional and required only for `make k9s`.
 
 Cloud commands need Azure CLI 2.80 or later, an authenticated enabled
 subscription in AzureCloud, and permission to register the service, create a
@@ -28,7 +29,7 @@ spinners or progress animations that hide errors.
 
 | Section | Commands |
 | --- | --- |
-| Local environment | `up`, `status`, `gateway-forward` |
+| Local environment | `up`, `status`, `k9s`, `gateway-forward` |
 | Foundry model | `foundry-register`, `foundry-regions`, `foundry-models`, `foundry-up`, `foundry-status`, `gateway-configure`, `endpoints` |
 | Prompting | `prompt` |
 | Diagnostics | `doctor`, `check`, `logs`, `test` |
@@ -53,6 +54,10 @@ project context. Kind selects Docker Desktop's `desktop-linux` context and the
 Docker provider. Ownership records include the actual Kind node ID, image, and
 API binding. An unexplained cluster with the same name is not adopted or deleted.
 Missing kubeconfig never falls back to your global context.
+
+Run `make k9s` to open K9s with the same local kubeconfig and explicit project
+context. It verifies the project cluster before launching and does not merge or
+switch your global contexts.
 
 `ports.env` reserves host ports 38470 through 38479:
 
@@ -97,9 +102,11 @@ region without creating resources:
 make foundry-models REGION=eastus2
 ```
 
-Discovery considers generally available small OpenAI-family text chat models,
-excluding preview/legacy models, audio-specialized models, fine-tuning SKUs,
-provisioned throughput, and third-party marketplace purchases. It checks the
+Discovery considers generally available GPT text chat models of all sizes,
+including full-size models as well as `mini` and `nano` variants. Models must
+support chat completions; Responses-only models are not offered by this workflow.
+Discovery excludes preview/legacy models, audio/image-specialized and realtime
+models, fine-tuning SKUs, provisioned throughput, and third-party marketplace purchases. It checks the
 catalog's exact quota identifier rather than guessing it from the model name.
 It requires both subscription quota and platform capacity. No capacity/quota
 result means no deployable candidate, not success.
@@ -131,6 +138,13 @@ Stable generated names and exact Azure resource IDs are recorded in
 REST interface to make the public-network and local-auth settings explicit.
 
 The account uses authenticated public HTTPS so a local Kind cluster can reach it.
+Account creation applies the requested `SecurityControl=Ignore` exception tag
+and sets `disableLocalAuth=false` to keep API-key authentication. The tag is
+scoped to this owned Foundry account, not its resource group or subscription.
+It is an organization-specific policy exception, not a built-in Azure security
+feature, and can exempt the account from policies that honor the tag. The
+deployment confirmation explicitly shows this exception.
+
 If Azure Policy blocks public access or key authentication, setup stops.
 It does not disable another resource's security policy or grant itself roles.
 The gateway does not inherit your host `az login` and does not pretend to have an

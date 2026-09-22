@@ -2,7 +2,8 @@
   .[] | select(.kind == "AIServices") | .model |
   select(.format == "OpenAI" and .lifecycleStatus == "GenerallyAvailable") |
   select(.capabilities.chatCompletion == "true") |
-  select(.name | test("^gpt-[0-9][a-zA-Z0-9.-]*(-mini|-nano)$")) |
+  select(.name | test("^gpt-[0-9][a-zA-Z0-9.-]*$")) |
+  select(.name | test("-(audio|realtime|transcribe|tts|image)(-|$)") | not) |
   . as $model |
   .skus[] | select(.name == "Standard" or .name == "GlobalStandard") |
   select(.usageName | contains("finetune") | not) |

@@ -183,7 +183,7 @@ discover_models() {
     new_temp; CANDIDATES=$TEMP_FILE
     jq -s '.' "$result" >"$CANDIDATES"
     jq -e 'length > 0' "$CANDIDATES" >/dev/null ||
-        die "No available generally available small chat model passed quota and capacity checks in $REGION."
+        die "No generally available GPT chat model passed quota and capacity checks in $REGION."
     section 'AVAILABLE CHAT MODELS'
     local index=0
     while IFS= read -r row; do
@@ -235,6 +235,7 @@ new_record() {
     info "Model: $MODEL / $MODEL_VERSION"
     info "Deployment: gateway-chat | $SKU | $CAPACITY capacity units"
     info 'Network: public authenticated HTTPS. Authentication: API key for local Kind.'
+    warn 'Account policy exception: SecurityControl=Ignore (this Foundry account only).'
     [[ "$SKU" != GlobalStandard ]] || warn 'GlobalStandard can process requests outside the resource region.'
     warn 'Model calls are billable. This is not a spending cap or a free deployment tier.'
     info 'Pricing: https://azure.microsoft.com/pricing/details/cognitive-services/openai-service/'
@@ -275,10 +276,13 @@ owned_account() {
     jq -e --arg owner "$(saved owner)" --arg region "$(saved region)" --arg id "$(saved accountId)" '
       .tags.agentgatewayProjectId==$owner and (.id|ascii_downcase)==($id|ascii_downcase) and
       .kind=="AIServices" and (.location|ascii_downcase)==$region and
-      .properties.allowProjectManagement==true and .properties.disableLocalAuth==false and
+      .properties.allowProjectManagement==true and
       .properties.publicNetworkAccess=="Enabled" and
       (.properties.networkAcls.defaultAction // "Allow")=="Allow"
     ' <<<"$account" >/dev/null || die "Foundry account settings/ownership differ. No security settings were changed."
+    if ! jq -e '.properties.disableLocalAuth==false' <<<"$account" >/dev/null; then
+        die "Foundry account reports disableLocalAuth=$(jq -c '.properties.disableLocalAuth' <<<"$account"). API-key mode requires false; check the account's approved policy exception. No security settings were changed."
+    fi
 }
 
 wait_azure() {
@@ -318,7 +322,7 @@ provision() {
     if [[ "$(jq length <<<"$accounts")" == 0 ]]; then
         new_temp; payload=$TEMP_FILE
         jq '{location:.region,kind:"AIServices",sku:{name:"S0"},identity:{type:"SystemAssigned"},
-          tags:{agentgatewayProjectId:.owner,project:"multi-tenant-ai-gateway"},
+          tags:{agentgatewayProjectId:.owner,project:"multi-tenant-ai-gateway",SecurityControl:"Ignore"},
           properties:{allowProjectManagement:true,customSubDomainName:.account,
             publicNetworkAccess:"Enabled",disableLocalAuth:false,networkAcls:{defaultAction:"Allow"}}}' \
             "$RECORD" >"$payload"
@@ -335,7 +339,8 @@ provision() {
         jq '{location:.region,identity:{type:"SystemAssigned"},properties:{}}' "$RECORD" >"$payload"
         put_resource "$(saved projectId)" "$payload"
     else
-        jq -e --arg project "$(saved project)" 'length==1 and .[0].name==$project' <<<"$projects" >/dev/null ||
+        jq -e --arg project "$(saved projectId)" \
+            'length==1 and (.[0].id|ascii_downcase)==($project|ascii_downcase)' <<<"$projects" >/dev/null ||
             die "Unexpected Foundry projects; the first/default project cannot be assumed."
     fi
     deployments=$(azure cognitiveservices account deployment list --name "$(saved account)" \
@@ -348,7 +353,7 @@ provision() {
         put_resource "$(saved deploymentId)" "$payload"
     else
         jq -e --slurpfile state "$RECORD" '
-          length==1 and .[0].name==$state[0].deployment and
+          length==1 and (.[0].id|ascii_downcase)==($state[0].deploymentId|ascii_downcase) and
           .[0].properties.model.name==$state[0].model and
           .[0].properties.model.version==$state[0].version and
           .[0].sku.name==$state[0].sku and .[0].sku.capacity==$state[0].capacity and
@@ -571,9 +576,9 @@ cloud_down() {
                 --resource-group "$(saved group)" --output json)
             deployments=$(azure cognitiveservices account deployment list --name "$(saved account)" \
                 --resource-group "$(saved group)" --output json)
-            jq -e --arg name "$(saved project)" 'all(.[]; .name==$name)' <<<"$projects" >/dev/null ||
+            jq -e --arg id "$(saved projectId)" 'all(.[]; (.id|ascii_downcase)==($id|ascii_downcase))' <<<"$projects" >/dev/null ||
                 die "Unexpected Foundry project; automatic deletion refused."
-            jq -e --arg name "$(saved deployment)" 'all(.[]; .name==$name)' <<<"$deployments" >/dev/null ||
+            jq -e --arg id "$(saved deploymentId)" 'all(.[]; (.id|ascii_downcase)==($id|ascii_downcase))' <<<"$deployments" >/dev/null ||
                 die "Unexpected model deployment; automatic deletion refused."
         fi
         azure group delete --name "$(saved group)" --yes

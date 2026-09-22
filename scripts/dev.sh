@@ -9,6 +9,7 @@ help_menu() {
     section 'LOCAL ENVIRONMENT'
     row 'make up' 'Start Kind and install agentgateway'
     row 'make status' 'Show local readiness and routing'
+    row 'make k9s' 'Open K9s using the project kubeconfig'
     row 'make gateway-forward' 'Open local gateway access until Ctrl-C'
     section 'FOUNDRY MODEL'
     row 'make foundry-register' 'Register the Azure service after confirmation'
@@ -200,6 +201,13 @@ case "${1:-help}" in
         ;;
     check) check_gateway ;;
     status) status ;;
+    k9s)
+        need k9s
+        verify_context
+        section 'K9S'
+        info "Context: $CONTEXT | Kubeconfig: .local/kubeconfig"
+        exec k9s --kubeconfig "$KUBECONFIG_FILE" --context "$CONTEXT"
+        ;;
     logs) verify_context; kube -n "$NAMESPACE" logs -f "deployment/$GATEWAY" --tail=100 ;;
     gateway-forward)
         verify_context; port_free "$GATEWAY_PORT"

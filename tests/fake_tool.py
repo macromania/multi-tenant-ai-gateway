@@ -52,11 +52,18 @@ def kubeconfig():
 
 
 def account():
+    tags = {"agentgatewayProjectId": record["owner"]}
+    exception = state.get("account_request", {}).get("tags", {}).get("SecurityControl")
+    if exception is not None:
+        tags["SecurityControl"] = exception
+    disabled = bool(os.environ.get("MOCK_LOCAL_AUTH_DISABLED"))
+    if os.environ.get("MOCK_LOCAL_AUTH_POLICY") and exception != "Ignore":
+        disabled = True
     return {"id": record["accountId"], "name": record["account"], "kind": "AIServices",
             "location": record["region"],
-            "tags": {"agentgatewayProjectId": record["owner"]},
+            "tags": tags,
             "properties": {"provisioningState": "Succeeded", "allowProjectManagement": True,
-                           "disableLocalAuth": False, "publicNetworkAccess": "Enabled"}}
+                           "disableLocalAuth": disabled, "publicNetworkAccess": "Enabled"}}
 
 
 def deployment():
@@ -64,6 +71,32 @@ def deployment():
             "sku": {"name": record["sku"], "capacity": record["capacity"]},
             "properties": {"provisioningState": "Succeeded", "versionUpgradeOption": "NoAutoUpgrade",
                            "model": {"name": record["model"], "version": record["version"]}}}
+
+
+def model_catalog():
+    models = [("gpt-5-nano", "2025-08-07", "GenerallyAvailable", "true")]
+    if os.environ.get("MOCK_LARGE_MODELS"):
+        models += [
+            ("gpt-5-mini", "2025-08-07", "GenerallyAvailable", "true"),
+            ("gpt-5", "2025-08-07", "GenerallyAvailable", "true"),
+            ("gpt-5.4", "2026-03-05", "GenerallyAvailable", "true"),
+            ("gpt-5.6-sol", "2026-07-09", "GenerallyAvailable", "true"),
+            ("gpt-6-astra", "2026-09-03", "GenerallyAvailable", "true"),
+            ("gpt-audio", "2025-08-28", "GenerallyAvailable", "true"),
+            ("gpt-4o-audio", "test-version", "GenerallyAvailable", "true"),
+            ("gpt-4o-realtime", "test-version", "GenerallyAvailable", "true"),
+            ("gpt-5-codex", "test-version", "GenerallyAvailable", "false"),
+            ("gpt-4.1", "2025-04-14", "Legacy", "true"),
+            ("gpt-6-preview", "test-version", "Preview", "true"),
+            ("model-router", "2025-11-18", "GenerallyAvailable", "true"),
+        ]
+    return [{"kind": "AIServices", "model": {
+        "format": "OpenAI", "lifecycleStatus": lifecycle,
+        "name": name, "version": version, "capabilities": {"chatCompletion": chat},
+        "skus": [{"name": "GlobalStandard", "usageName": "OpenAI.GlobalStandard." + name,
+                  "capacity": {"minimum": 1, "default": 10, "maximum": 100,
+                               "step": 1, "allowedValues": None}}],
+    }} for name, version, lifecycle, chat in models]
 
 
 if tool == "sleep":
@@ -99,6 +132,9 @@ elif tool == "kind":
     elif args[:2] == ["delete", "cluster"]:
         state["cluster"] = False
         save()
+elif tool == "k9s":
+    output("k9s ready")
+    sys.exit(int(os.environ.get("MOCK_K9S_EXIT", "0")))
 elif tool == "helm":
     if os.environ.get("MOCK_HELM_FAIL"):
         print("simulated chart install error", file=sys.stderr)
@@ -218,14 +254,10 @@ elif tool == "az":
         state["registered"] = True
         save()
     elif args[:3] == ["cognitiveservices", "model", "list"]:
-        output([{"kind": "AIServices", "model": {
-            "format": "OpenAI", "lifecycleStatus": "GenerallyAvailable",
-            "name": "gpt-5-nano", "version": "2025-08-07", "capabilities": {"chatCompletion": "true"},
-            "skus": [{"name": "GlobalStandard", "usageName": "OpenAI.GlobalStandard.gpt-5-nano",
-                      "capacity": {"minimum": 1, "default": 10, "maximum": 100, "step": 1, "allowedValues": None}}]}}])
+        output(model_catalog())
     elif args[:3] == ["cognitiveservices", "usage", "list"]:
-        output([{"name": {"value": "OpenAI.GlobalStandard.gpt-5-nano"}, "currentValue": 0,
-                 "limit": 0 if os.environ.get("MOCK_NO_QUOTA") else 100}])
+        output([{"name": {"value": entry["model"]["skus"][0]["usageName"]}, "currentValue": 0,
+                 "limit": 0 if os.environ.get("MOCK_NO_QUOTA") else 100} for entry in model_catalog()])
     elif args[:2] == ["group", "exists"]:
         output("true" if state.get("group") else "false")
     elif args[:2] == ["group", "create"]:
@@ -255,6 +287,8 @@ elif tool == "az":
                 "skuName": "GlobalStandard", "availableCapacity": 0 if os.environ.get("MOCK_NO_CAPACITY") else 100}}]})
         elif option("--method") == "put":
             item = "project" if "/projects/" in url else "deployment" if "/deployments/" in url else "account"
+            if item == "account":
+                state["account_request"] = json.loads(Path(option("--body")[1:]).read_text())
             state[item] = True
             save()
             output({"properties": {"provisioningState": "Succeeded"}})
@@ -267,7 +301,8 @@ elif tool == "az":
     elif args[:4] == ["cognitiveservices", "account", "keys", "list"]:
         output("TEST_AZURE_CREDENTIAL_NEVER_PRINT_12345")
     elif args[:4] == ["cognitiveservices", "account", "project", "list"]:
-        output([{"name": record["project"]}] if state.get("project") else [])
+        output([{"name": record["account"] + "/" + record["project"], "id": record["projectId"]}]
+               if state.get("project") else [])
     elif args[:4] == ["cognitiveservices", "account", "project", "show"]:
         output({"properties": {"endpoints": {"AI Foundry API":
             f"https://{record['account']}.services.ai.azure.com/api/projects/{record['project']}"}}})
