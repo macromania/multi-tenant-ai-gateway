@@ -1,0 +1,16 @@
+controller:
+  replicaCount: 1
+  xds:
+    mode: tls
+  extraEnv:
+    AGW_ENABLE_EXPERIMENTAL_GATEWAY_API_FEATURES: "false"
+rbac:
+  gatewayNamespaces:
+    - agentgateway-system
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
