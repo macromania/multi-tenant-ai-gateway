@@ -1,6 +1,6 @@
 # Shared versus dedicated agentgateway: results
 
-Generated 2026-09-24T22:09:40Z from commit `6587122fdd95cd5f2fa46b804a12b98527ffb777`. This report is written by `make results` from the run records under `results/`; do not edit it by hand.
+Generated 2026-09-24T22:10:08Z from commit `a5dbab936d82e11161d86a51f809e3fba567a34d`. This report is written by `make results` from the run records under `results/`; do not edit it by hand.
 
 > **Leaks recorded** in 5 run(s). A leak is a response served with another tenant's provider key. Some failures create a cross-tenant mistake on purpose; their leaks show whether a design stops that mistake.
 >
