@@ -62,11 +62,13 @@ Helm and kubectl output is shown rather than hidden.
 | --- | --- |
 | Clusters | `up`, `status`, `down CONFIRM=1` |
 | Tenants | `tenant-add`, `tenant-limit`, `tenants`, `tenant-objects`, `gateway-config`, `tenant-remove CONFIRM=1` |
-| Traffic | `prompt` |
+| Traffic | `prompt`, `load` |
+| Experiments | `calibrate`, `scenario NAME=...`, `break FAILURE=...`, `restore`, `scale TENANTS=...` |
 | Observability | `grafana`, `prometheus`, `dashboard`, `logs`, `gateway-forward`, `k9s` |
+| Results | `results` |
 | Foundry model | `foundry-register`, `foundry-regions`, `foundry-models`, `foundry-up`, `foundry-status`, `gateway-configure`, `endpoints` |
 | Diagnostics | `doctor`, `check` |
-| Cleanup | `down CONFIRM=1`, `legacy-down CONFIRM=1`, `foundry-down CONFIRM=1` |
+| Cleanup | `down CONFIRM=1`, `tenant-remove CONFIRM=1`, `foundry-down CONFIRM=1` |
 
 For troubleshooting, `cluster-up` and `gateway-install` run individual setup stages.
 
@@ -218,6 +220,53 @@ Secret and plan ConfigMap are owned by the Job, so Kubernetes deletes them with 
 latency as native histograms, to the cluster's Prometheus, where the "Tenants: what the clients saw"
 panels read them.
 
+```bash
+make load CLUSTER=shared TENANT=tenant-01 PROFILE=flood DURATION=60s
+make load CLUSTER=shared TENANT=tenant-01 PROFILE=latency UPSTREAM=mock RATE=100
+```
+
+`make load` runs one attack stream for `TENANT` with a workload profile (see
+[the comparison guide](tenancy-comparison.md#workload-profiles)), plus probes for the working set,
+and prints the summary. It does not change any limit.
+
+## Experiments
+
+```bash
+make calibrate CLUSTER=both
+make scenario CLUSTER=both NAME=separation
+make break CLUSTER=both FAILURE=proxy-crash
+make scale CLUSTER=both TENANTS=1,5,10
+make results
+```
+
+[The comparison guide](tenancy-comparison.md) explains what each experiment does and how to read
+its results. The mechanics:
+
+- `scripts/experiments.sh` holds the profiles, the recovery journal, the entry and recovery checks,
+  the Prometheus queries, the probe analysis, calibration, and the scenarios.
+  `scripts/failures.sh` holds the ten failures, each as `prepare_`, `trigger_`, `check_` (the
+  invocation check), and `restore_` functions run by `run_failure`. `scripts/scale.sh` runs the
+  sweep, and `scripts/results.sh` with `scripts/report.jq` writes `results/report.md`.
+- The working set is tenant-01, tenant-02, and tenant-03. Experiments refuse to start without it;
+  `make scale CLUSTER=... TENANTS=3` creates it.
+- Before an experiment changes anything, it writes `.local/<cluster>/experiment.json` (mode 0600),
+  which records the original state and the stage reached. The journal can hold a mock provider key
+  during credential rotation. An experiment restores on exit, including after Ctrl-C. `KEEP=1`
+  leaves a failure in place; `make restore CLUSTER=...` then converges the cluster back and deletes
+  the journal once the recovery checks pass. A new experiment refuses to start while a journal
+  exists.
+- Only one cluster is measured at a time. An experiment refuses to start while the other cluster
+  runs a load Job, and it samples the other Kind node's CPU; a run where that node averaged more
+  than 0.5 CPU is marked confounded.
+- Each run writes `results/<cluster>/<UTC time>-<kind>-<name>/`. `run.json` holds the Git commit,
+  whether the inputs matched it at the start and the end, the input fingerprint (a SHA-256 over
+  `Makefile`, `scripts/`, `deploy/`, `versions.env`, and `ports.env`, leaving out the report
+  generator `scripts/results.sh` and `scripts/report.jq`), the configuration
+  fingerprint, the versions, the validity verdict, and Grafana links. `results/` is part of neither
+  fingerprint.
+- Commit the implementation before measuring. `make results` compares only runs made with
+  committed code whose input fingerprint equals the current one.
+
 ## Foundry registration and deployment
 
 ```bash
@@ -275,20 +324,40 @@ Foundry leave the machine.
 Use `make status`, `make check`, and `make logs` to inspect failure. `make up` can be repeated; it
 verifies the existing cluster's identity and reapplies configuration.
 
+After an interrupted experiment, or one run with `KEEP=1`, run `make restore CLUSTER=...`. It
+reapplies every tenant's configuration from the journal and the stored keys, removes load Jobs,
+scales controllers back to one, and runs the recovery checks. It can be repeated.
+
 ```bash
+make restore CLUSTER=shared
 make down CLUSTER=shared CONFIRM=1
-make legacy-down CONFIRM=1
 make foundry-down CONFIRM=1
 ```
 
 `down` deletes one project cluster and its `.local/<cluster>/` state. `.env`, `.env.tenants`, and
-Azure resources remain. `legacy-down` deletes the retired single-user cluster
-`multi-tenant-ai-gateway` after verifying its recorded identity, and removes its single-user key from
-`.env`. `foundry-down` deletes only the recorded, project-owned Azure resources after verifying their
-IDs and tags, then removes the Foundry objects from every project cluster.
+Azure resources remain. `foundry-down` deletes only the recorded, project-owned Azure resources after
+verifying their IDs and tags, then removes the Foundry objects from every project cluster.
 
 ## Verification
 
 There is no offline test suite. Each command verifies its own outcome live: `make up` ends with
-`make check`, `gateway-configure` checks for 401 responses before applying the paid route, and later
-milestones add experiments whose checks prove that the mechanism under test actually ran.
+`make check`, `gateway-configure` checks for 401 responses before applying the paid route, every
+failure has an invocation check that proves it really happened, and every run records whether the
+load generator and the mock delivered the planned workload.
+
+## Writing scripts
+
+The scripts run under macOS `/bin/bash` 3.2, which behaves differently from newer Bash in ways that
+have broken measurements here:
+
+- Assign a command substitution to a variable before passing it on. Inside `"$(...)"` used as a
+  command argument, including `local x="$(...)"` and array elements, Bash 3.2 expands a
+  double-quoted `{a,b}`, so a Prometheus selector such as `{namespace=~"...",container!=""}` is split
+  into several words. `prom_instant` refuses anything but exactly two arguments to catch this.
+- `set -e` does not apply inside a command substitution, or inside a function called from an `if`,
+  `||`, or `&&` context. Run steps that must stop on error as plain commands, or check each result.
+- A subshell's EXIT trap does not run while the parent's EXIT trap runs. Temporary files therefore
+  live in one directory per process (`new_temp`), which the process removes on exit.
+- In jq, a function parameter written `$f` is evaluated once from the function's input; write `f`
+  for a filter applied per item. Prometheus reports 0/0 as the string `"NaN"`, which `tonumber`
+  turns into null.

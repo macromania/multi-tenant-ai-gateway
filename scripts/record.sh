@@ -6,7 +6,8 @@
 # later run look like it used uncommitted code.
 
 RESULTS="$ROOT/results"
-INPUT_PATHS=(Makefile scripts deploy versions.env ports.env)
+# The report generator only reads run records, so changing it never makes a measurement stale.
+INPUT_PATHS=(Makefile scripts deploy versions.env ports.env ':(exclude)scripts/results.sh' ':(exclude)scripts/report.jq')
 RUN_ID=
 RUN_DIR=
 RUN_PROVENANCE=

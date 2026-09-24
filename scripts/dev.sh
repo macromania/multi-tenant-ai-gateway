@@ -3,8 +3,6 @@ set -euo pipefail
 if [[ "${1:-help}" == help ]]; then exec 2>&1; fi
 source "$(dirname -- "${BASH_SOURCE[0]}")/common.sh"
 
-LEGACY_CLUSTER=multi-tenant-ai-gateway
-
 help_menu() {
     printf '\n%s  MULTI-TENANT AI GATEWAY | SHARED VERSUS DEDICATED%s\n' "$BOLD" "$RESET" >&2
     info "Clusters: mtag-shared (one gateway for all tenants), mtag-dedicated (one gateway per tenant)"
@@ -44,6 +42,10 @@ help_menu() {
     row 'make logs' 'Follow proxy logs (TENANT in dedicated)'
     row 'make gateway-forward' 'Open gateway access (TENANT in dedicated)'
     row 'make k9s' 'Open K9s using the cluster kubeconfig'
+    section 'RESULTS'
+    row 'make results' 'Write results/report.md from run records'
+    info ''
+    info 'Only valid runs made with committed, current code are compared.'
     section 'FOUNDRY MODEL'
     row 'make foundry-register' 'Register the Azure service after confirmation'
     row 'make foundry-regions' 'List supported region choices'
@@ -58,7 +60,6 @@ help_menu() {
     section 'CLEANUP'
     row 'make down CONFIRM=1' 'Delete only the selected project cluster'
     row 'make tenant-remove CONFIRM=1' 'Delete one tenant and its keys'
-    row 'make legacy-down CONFIRM=1' 'Delete the retired single-user cluster'
     row 'make foundry-down CONFIRM=1' 'Delete only owned Azure resources'
     section 'GETTING STARTED'
     info 'Prerequisites: Docker Desktop, Kind, kubectl, Helm, curl, jq, OpenSSL, lsof.'
@@ -70,8 +71,10 @@ help_menu() {
     info 'make scale CLUSTER=both TENANTS=3'
     info 'make prompt CLUSTER=shared TENANT=tenant-01 UPSTREAM=mock PROMPT="Hello"'
     info 'make break CLUSTER=both FAILURE=proxy-crash'
+    info 'make results'
     info 'make grafana CLUSTER=shared'
     section 'DOCUMENTATION'
+    info 'Comparison guide:      docs/tenancy-comparison.md'
     info 'Development guide:     docs/local-development.md'
     info 'Implementation plan:   docs/plans/tenancy-comparison-execplan.md'
     info 'Review findings:       FINDINGS.md'
@@ -136,9 +139,6 @@ doctor() {
     for target in shared dedicated; do
         CLUSTER=$target; select_cluster; cluster_readiness
     done
-    if kind_local get clusters 2>/dev/null | grep -Fxq "$LEGACY_CLUSTER"; then
-        warn "The retired single-user cluster $LEGACY_CLUSTER still runs. Remove it with make legacy-down CONFIRM=1."
-    fi
     section 'AZURE READINESS'
     if command -v az >/dev/null 2>&1; then
         info 'Azure CLI is installed. Cloud commands validate login and quota separately.'
@@ -447,36 +447,6 @@ down() {
     warn 'Azure resources, .env, and this cluster'"'"'s keys in .env.tenants are preserved.'
 }
 
-legacy_down() {
-    section "RETIRING THE SINGLE-USER CLUSTER | $LEGACY_CLUSTER"
-    [[ "${CONFIRM:-}" == 1 ]] || die "This deletes only $LEGACY_CLUSTER. Rerun: make legacy-down CONFIRM=1"
-    CLUSTER=legacy
-    KIND_CLUSTER=$LEGACY_CLUSTER
-    CONTEXT="kind-$LEGACY_CLUSTER"
-    CLUSTER_STATE="$STATE/legacy"
-    KUBECONFIG_FILE="$CLUSTER_STATE/kubeconfig"
-    NODE_NAME="$LEGACY_CLUSTER-control-plane"
-    KUBERNETES_PORT=$LEGACY_KUBERNETES_PORT
-    local additions
-    if cluster_exists; then
-        verify_cluster
-        kind_local delete cluster --name "$KIND_CLUSTER" --kubeconfig "$KUBECONFIG_FILE"
-        if cluster_exists; then die "Kind still reports $KIND_CLUSTER after deletion."; fi
-        ok "Deleted $LEGACY_CLUSTER"
-    else
-        ok "$LEGACY_CLUSTER is already absent"
-    fi
-    rm -rf -- "$CLUSTER_STATE"
-    # Later temporary files must not recreate the deleted state directory.
-    CLUSTER_STATE=
-    if [[ -f "$ROOT/.env" ]]; then
-        new_temp; additions=$TEMP_FILE
-        printf '{"AGENTGATEWAY_BASE_URL":null,"AGENTGATEWAY_API_KEY":null}\n' >"$additions"
-        save_env "$additions"
-        ok 'Removed the single-user gateway key from .env'
-    fi
-}
-
 tenant_scope_namespace() {
     if [[ "$CLUSTER" == dedicated ]]; then
         validate_tenant "${TENANT:-}"
@@ -489,7 +459,6 @@ tenant_scope_namespace() {
 case "${1:-help}" in
     help) help_menu ;;
     doctor) doctor ;;
-    legacy-down) section 'PREREQUISITES'; tools_ready; legacy_down ;;
     status) select_cluster_or_both dev.sh "$@"; status ;;
     check) select_cluster_or_both dev.sh "$@"; check_gateway ;;
     *)

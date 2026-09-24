@@ -25,12 +25,36 @@ make help
 make doctor
 make up CLUSTER=shared
 make up CLUSTER=dedicated
+make scale CLUSTER=both TENANTS=3
 make status CLUSTER=both
+```
+
+`make scale TENANTS=3` adds tenant-01 to tenant-03, the working set every experiment uses, and
+records each cluster's footprint. Try a request through the mock upstream:
+
+```bash
+make prompt CLUSTER=shared TENANT=tenant-01 UPSTREAM=mock PROMPT="Hello"
 ```
 
 Every command that touches a cluster needs `CLUSTER=shared` or `CLUSTER=dedicated`; no cluster is
 ever chosen for you. Each cluster has its own kubeconfig under `.local/<cluster>/` and never changes
 your current Kubernetes context, Docker context, or Azure subscription.
+
+## Compare the designs
+
+```bash
+make calibrate CLUSTER=both
+make scenario CLUSTER=both NAME=separation
+make break CLUSTER=both FAILURE=proxy-crash
+make scale CLUSTER=both TENANTS=1,5,10
+make results
+```
+
+Each experiment measures the shared cluster, then the dedicated cluster, restores what it changed,
+and writes a run record under `results/`. `make results` writes
+[results/report.md](results/report.md), which compares only valid runs made with committed, current
+code. The ten failures, the scenarios, and how to read the report are described in the
+[comparison guide](docs/tenancy-comparison.md).
 
 ## Observe
 
@@ -68,6 +92,8 @@ make foundry-down CONFIRM=1
 
 ## More
 
+- [Comparison guide](docs/tenancy-comparison.md): the two designs, every experiment, and how to read the results.
+- [Results](results/report.md): the report written by `make results`.
 - [Development guide](docs/local-development.md): prerequisites, ports, state, safety boundaries.
 - [Implementation plan](docs/plans/tenancy-comparison-execplan.md): the living plan and its decisions.
 - [Review findings](FINDINGS.md): what each review found and what was done about it.

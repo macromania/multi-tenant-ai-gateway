@@ -11,7 +11,7 @@ Today this repository runs one local Kubernetes cluster with one agentgateway th
 
 In the shared cluster, one agentgateway serves every tenant, the way a SaaS API serves all of its customers from one endpoint. The API key in each request tells the gateway which tenant is calling. In the dedicated cluster, every tenant gets its own complete agentgateway, meaning its own controller and its own proxy, inside its own Kubernetes namespace.
 
-The developer can add tenants, send prompts, generate load, break things on purpose, grow each cluster to 20 tenants, and read a committed report that compares both designs on the same measurements. Every result links to the matching time range in Grafana. The report is the input to a later architecture decision. This work does not choose a design, and it must not present either design as the answer.
+The developer can add tenants, send prompts, generate load, break things on purpose, grow each cluster to 10 tenants, and read a committed report that compares both designs on the same measurements. Every result links to the matching time range in Grafana. The report is the input to a later architecture decision. This work does not choose a design, and it must not present either design as the answer.
 
 You can see it working when `make break CLUSTER=both FAILURE=proxy-crash` prints, for each cluster in turn, which tenants saw errors, for how long, what error they saw, and how long recovery took, and when `make results` then writes results/report.md containing that comparison with Grafana links.
 
@@ -33,10 +33,12 @@ Two words have fixed meanings in this plan, in the code, and in every document i
 - [x] (2026-09-24 14:35Z) Milestone 3 reviews: the rubber-duck review found 5 blocking and 4 non-blocking issues and the security review 1 medium issue, all fixed. Because Milestone 4 had already changed the same script, the fixes and Milestone 4 are in one commit. Recorded in FINDINGS.md.
 - [x] (2026-09-24 14:35Z) Milestone 4: dedicated-cluster tenants (tenant-01 to tenant-03), each with its own controller, GatewayClass, proxy, policies, mock provider key, and Foundry connection; measured onboarding and offboarding in both designs with the staged key lifecycle; bystander probes for tenant-01 and tenant-02 saw no failure while tenant-03 was removed.
 - [x] (2026-09-24 15:20Z) Milestone 4 reviews: the rubber-duck review found 6 blocking and 3 non-blocking issues and the security review 3 medium issues, all fixed with an explicit tenant state (onboarding, active, offboarding). Recorded in FINDINGS.md.
-- [ ] Milestone 5: prompts, load, calibration, and the separation, latency, rollout, and Foundry smoke scenarios.
-- [ ] Milestone 6: the ten deliberate failure modes with automatic restore.
-- [ ] Milestone 7: the scale sweep and onboarding measurements.
-- [ ] Milestone 8: the results report, Grafana links, documentation, and final cleanup.
+- [x] (2026-09-24 16:40Z) Milestone 5: `make load`, `make calibrate`, `make restore`, and the separation, latency, rollout, and Foundry smoke scenarios, with the recovery journal and run records. Verified live in both clusters with development runs (separation 14 of 14 checks shared and 24 of 24 dedicated; Foundry answered every tenant in both).
+- [x] (2026-09-24 16:40Z) Milestone 6: the ten failures with invocation checks, automatic restore, and per-tenant impact, each run in both clusters with a passing invocation check (development runs; see Surprises & Discoveries).
+- [x] (2026-09-24 16:40Z) Milestone 7: `make scale`, verified with a single step in the shared cluster and a 2,4 sweep in the dedicated cluster that returned to three tenants.
+- [x] (2026-09-24 16:40Z) Milestone 8 implementation: `make results`, docs/tenancy-comparison.md, README.md and docs/local-development.md updated, `legacy-down` removed. Development runs were deleted before committing; measured runs come from the final campaign on committed code.
+- [ ] Milestone 5 to 8 reviews (rubber-duck and security for each), fixes, and FINDINGS.md.
+- [ ] Final campaign on committed code in both clusters, `make results`, and the committed report.
 
 
 ## Surprises & Discoveries
@@ -139,8 +141,76 @@ These facts were found while designing the plan, before any implementation. Each
 - Observation: in agentgateway v1.5.0, gateway-level API key authentication runs before gateway transformations and route selection, authentication removes the consumed client credential before the request goes upstream, `transformation.request.set` overwrites a header, and `add` appends a value instead of filling a missing one. OpenAI-compatible request and response processing keeps custom headers such as x-probe-id and x-mock-key-owner.
   Evidence: second rubber-duck review of the v1.5.0 source, including crates/agentgateway/src/http/transformation_cel.rs lines 348 to 354 for `add`. P2 still confirms each point live.
 
+- Observation (Milestone 6): the kubelet's restart back-off turns repeated crash tests into much longer outages. After several kills in a row, the shared proxy stayed down for 18.5 seconds; after it had run for 10 minutes, the same kill cost every tenant 1.2 to 1.4 seconds. After a back-off restart, `lastState` can be empty, and containerd removes an exited container almost at once.
+  Evidence: development runs of `make break CLUSTER=shared FAILURE=proxy-crash`: the first showed CrashLoopBackOff events; the later run printed "the killed container exited with code 137; the same pod restarted it" with episodes of 1,201 to 1,400 ms. The exit code is now read with `crictl inspect <old container ID>` immediately after the kill.
+
+- Observation (Milestone 6): stopping k6 through its REST API can end a request that is still in flight with status 0 and a transport error, rather than leaving it unfinished. Counted as a failure, it produced a negative episode after the end of the run.
+  Evidence: slow-upstream (shared) reported "1 episodes, -146 ms failed, statuses 0 x1" for tenant-02; the record started 146 ms after the run's end mark with `error_code` 1000.
+
+- Observation (Milestone 6): macOS `/bin/bash` 3.2 never runs a subshell's EXIT trap while the parent's EXIT trap is running, so each exit hook's own cleanup never ran, and temporary files made inside `$(...)` were recorded only in the subshell. About 250 temporary files had accumulated in `.local/` during development.
+  Evidence: `/bin/bash -c 'c() { ( trap "echo trap ran in hook" EXIT; echo hook ); }; trap c EXIT; echo main'` prints only "main" and "hook".
+
+- Observation (Milestones 6 and 7): macOS `/bin/bash` 3.2 applies brace expansion to a double-quoted `{a,b}` inside `"$(...)"` when the substitution is a command argument (including `local x="$(...)"` and array elements), but not when it is assigned to a variable. Every Prometheus selector such as `{namespace=~"...",container!=""}` passed that way was split into several queries, and Prometheus rejected them without the scripts noticing, so the failure runs' per-pod resource figures and the first scale records were empty.
+  Evidence: `/bin/bash -c 'f() { echo "[$1]"; }; printf "%s\n" "$(f "s{a,c}")"'` prints `[sa]` and `[sc]`; `x=$(f "s{a,c}")` keeps `s{a,c}`. `prom_instant` now requires exactly two arguments and fails when Prometheus does not answer "success", and every query result is assigned before use.
+
+- Observation (Milestone 7): in `/bin/bash` 3.2, `set -e` does not apply inside a command substitution or inside a function called from an `if`, `||`, or `&&` context, so a failed measurement inside the first scale step still wrote a record of nulls.
+  Evidence: `/bin/bash -c 'set -e; x=$(false; echo after); echo "[$x]"'` prints `[after]`. The measurement now runs as a plain command.
+
+- Observation (Milestone 7): a jq function parameter written `$f` is a value computed once from the function's input, not a filter applied per item; `def rows($r; $f)` called under `jq -n` computed `null * 1000` and failed. Prometheus also reports a 0/0 ratio as the string "NaN", which jq's `tonumber` turns into null.
+  Evidence: `jq: error (at <unknown>): null (null) and number (1000) cannot be multiplied` from the first corrected failure run; `jq -n '"NaN" | tonumber'` prints `null`.
+
+- Observation (Milestone 6, development runs, shared cluster): what each failure did to the one shared gateway.
+  - bad-tenant-config: the policy stayed Accepted with reason PartiallyValid ("condition CEL expression is invalid"), the proxy dropped only tenant-01's limit, and no request failed. The mistake is silent to every tenant.
+  - duplicate-key: 627 leaks; tenant-01's requests were served with tenant-02's provider key, and tenant-02's own key got 401 for the whole window.
+  - wrong-credential: the backend referencing `mock-provider-tenant-01` was Accepted, so tenant-02 was served with tenant-01's key in both halves (301 and 297 leaks, 24 more during the restore).
+  - forged-tenant-header: no leak while `tenant-routing` overwrote the header; 299 leaks in the second half once the policy trusted a client-supplied header.
+  - proxy-memory: 256 KiB prompts held for 30 seconds OOM-killed the 512 MiB proxy (maximum sampled working set 458 MiB); every tenant lost about 25 seconds across 6 or 7 episodes.
+  - controller-outage: no request failed, and neither limit change reached the proxy until the controller returned.
+  - credential-rotation: tenant-01 got 13 refusals (401) from the mock over 2.6 seconds between the mock and gateway updates; the other tenants saw nothing.
+  - flood: 236,699 of 239,466 flood requests got 429; tenant-02 and tenant-03 had no failures, but two or three probes each took up to about 1 second (over five times their baseline p95).
+
+- Observation (Milestone 6, development runs, dedicated cluster): what each failure did when every tenant has its own gateway.
+  - proxy-crash: only tenant-01 failed, for 2.0 seconds; tenant-02 and tenant-03 saw nothing.
+  - bad-tenant-config: tenant-01's own policy became PartiallyValid and lost its only entry; no request failed.
+  - duplicate-key: tenant-02 was locked out with 401 for the whole window, and tenant-01's key sent to tenant-02's gateway was served with tenant-02's provider key (634 leaks). tenant-01's own gateway was unaffected.
+  - wrong-credential: the reference to `mock-provider-tenant-01` found no such Secret in tenant-02's namespace, so tenant-02's requests failed closed with 500 (305 requests) and nothing leaked; the value mistake in the second half leaked 292 requests, as in the shared cluster.
+  - forged-tenant-header: no leak; tenant-01's forged requests were served as tenant-01 at its own gateway and refused (401) at tenant-02's.
+  - proxy-memory: tenant-01's proxy was OOM-killed repeatedly (15 episodes, 31 seconds failed); tenant-02 and tenant-03 saw nothing.
+  - controller-outage: tenant-01's change waited for its controller, while tenant-02's change applied during the outage because its own controller was running.
+  - flood and slow-upstream: tenant-02 and tenant-03 saw no failure and no slow request.
+  - credential-rotation: as in the shared cluster, 2.6 seconds of 401 from the mock for tenant-01 only.
+  - rollout: three policies written and enforced for every tenant after 3.8 seconds (one policy after 2.6 seconds in the shared cluster).
+
 
 ## Decision Log
+
+- Decision (Milestone 6): a crash is measured only from a proxy that has run for 10 minutes, so both designs see a first-crash restart rather than a back-off delay.
+  Rationale: the kubelet resets its restart back-off after 10 minutes of running; without the wait, the result measured earlier experiments, not the design.
+  Date/Author: 2026-09-24, Copilot.
+
+- Decision (Milestone 6): a request that k6 ends with a transport error after the stop was requested is recorded as censored, and the probe analysis ignores requests that started after the run's end mark.
+  Rationale: such a request measures the load generator's stop, not the system under test.
+  Date/Author: 2026-09-24, Copilot.
+
+- Decision (Milestone 6): controller-outage changes both tenant-01's and tenant-02's limits in both designs, not only in the dedicated one.
+  Rationale: in the shared cluster the second change shows whether a bystander's configuration is also frozen by the outage; in the dedicated cluster it shows whether it is not.
+  Date/Author: 2026-09-24, Copilot.
+
+- Decision (Milestone 6): every temporary file lives in one private directory per process, created when the process starts and removed by its exit trap after every exit hook has run. Exit hooks no longer have their own cleanup.
+  Rationale: see the Bash 3.2 trap observation above; a per-file list cannot see files created in subshells.
+  Date/Author: 2026-09-24, Copilot.
+
+- Decision (Milestone 6): a failure run is also invalid when the mock was CPU-throttled in more than 10 percent of the observe window or a k6 container was OOM-killed, as the validity rules in Milestone 5 require. Each failure summary names its target and how many tenants that target serves, and reports the measured recovery.
+  Rationale: the first implementation checked these only during calibration.
+  Date/Author: 2026-09-24, Copilot.
+
+- Decision (Milestones 7 and 8): the report generator (`scripts/results.sh` and `scripts/report.jq`) is left out of the input fingerprint and the committed-inputs check. The scale sweep's CPU figures use a rate window equal to each sample's own window (60 seconds idle, 120 seconds under load).
+  Rationale: the generator only reads run records, so changing it must not make every measurement stale; a 2-minute idle window would include the onboarding that just finished.
+  Date/Author: 2026-09-24, Copilot.
+
+- Decision (Milestone 7): `prom_instant` fails unless it gets exactly two arguments and Prometheus answers "success", and every query result is assigned to a variable before it is used. The scale sweep converges inside an `if` (its stop conditions are expected outcomes) but measures as a plain command, so any measurement error stops the sweep instead of recording nulls.
+  Rationale: see the Bash 3.2 observations above; each of these silently produced empty figures during development.
+  Date/Author: 2026-09-24, Copilot.
 
 - Decision (Milestone 1): pinned K6_IMAGE=grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34, PYTHON_IMAGE=python:3.13-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0 (both multi-architecture index digests), and KUBE_PROMETHEUS_STACK_VERSION=91.5.1 (Prometheus v3.14.0, operator v0.94.1).
   Rationale: latest stable releases on 2026-09-24, resolved with `docker buildx imagetools inspect` and `helm show chart`.

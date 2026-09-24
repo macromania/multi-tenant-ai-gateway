@@ -29,14 +29,14 @@ override CONFIRM := $(value CONFIRM)
 export CLUSTER TENANT UPSTREAM TOKENS_PER_MINUTE PROFILE RATE DURATION NAME KEEP FAILURE RAISE_LIMIT TENANTS PROMPT PROMPT_FILE FORMAT REGION MODEL MODEL_VERSION SKU CAPACITY CONFIRM
 
 DEV_TARGETS := help doctor up cluster-up gateway-install status k9s dashboard logs gateway-forward \
-	grafana prometheus check down legacy-down
+	grafana prometheus check down
 FOUNDRY_TARGETS := foundry-register foundry-regions foundry-models foundry-up foundry-status \
 	gateway-configure endpoints foundry-down
 
 TENANT_TARGETS := tenant-add tenant-remove tenant-limit tenants tenant-objects gateway-config
 EXPERIMENT_TARGETS := calibrate scenario break load restore
 
-.PHONY: $(DEV_TARGETS) $(FOUNDRY_TARGETS) $(TENANT_TARGETS) $(EXPERIMENT_TARGETS) prompt scale
+.PHONY: $(DEV_TARGETS) $(FOUNDRY_TARGETS) $(TENANT_TARGETS) $(EXPERIMENT_TARGETS) prompt scale results
 
 $(DEV_TARGETS):
 	@/bin/bash scripts/dev.sh $@
@@ -55,3 +55,6 @@ prompt:
 
 scale:
 	@/bin/bash scripts/scale.sh
+
+results:
+	@/bin/bash scripts/results.sh
