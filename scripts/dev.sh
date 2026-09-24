@@ -13,6 +13,18 @@ help_menu() {
     row 'make up' 'Create or update a cluster and its components'
     row 'make status' 'Show workloads, gateways, and routing (both)'
     row 'make down CONFIRM=1' 'Delete one project cluster'
+    section 'TENANTS'
+    row 'make tenant-add' 'Add TENANT (optional TOKENS_PER_MINUTE)'
+    row 'make tenant-limit' 'Set TOKENS_PER_MINUTE for TENANT or all'
+    row 'make tenants' 'List tenants and their limits'
+    row 'make tenant-objects' 'Show every object holding TENANT settings'
+    row 'make gateway-config' 'Show what the proxy enforces for TENANT'
+    row 'make tenant-remove CONFIRM=1' 'Remove TENANT and delete its keys'
+    section 'TRAFFIC'
+    row 'make prompt' 'Send one chat request as TENANT'
+    info ''
+    info 'Usage: make prompt CLUSTER=shared TENANT=tenant-01 PROMPT="Hello"'
+    info '       make prompt CLUSTER=shared TENANT=tenant-01 UPSTREAM=mock PROMPT="Hello"'
     section 'OBSERVABILITY'
     row 'make grafana' 'Open Grafana on localhost until Ctrl-C'
     row 'make prometheus' 'Open Prometheus on localhost until Ctrl-C'
@@ -33,6 +45,7 @@ help_menu() {
     row 'make check' 'Check gateways without calling a model (both)'
     section 'CLEANUP'
     row 'make down CONFIRM=1' 'Delete only the selected project cluster'
+    row 'make tenant-remove CONFIRM=1' 'Delete one tenant and its keys'
     row 'make legacy-down CONFIRM=1' 'Delete the retired single-user cluster'
     row 'make foundry-down CONFIRM=1' 'Delete only owned Azure resources'
     section 'GETTING STARTED'
@@ -42,6 +55,8 @@ help_menu() {
     info 'make doctor'
     info 'make up CLUSTER=shared'
     info 'make up CLUSTER=dedicated'
+    info 'make tenant-add CLUSTER=shared TENANT=tenant-01'
+    info 'make prompt CLUSTER=shared TENANT=tenant-01 UPSTREAM=mock PROMPT="Hello"'
     info 'make grafana CLUSTER=shared'
     section 'DOCUMENTATION'
     info 'Development guide:     docs/local-development.md'
@@ -225,6 +240,9 @@ install_shared_gateway() {
     kube_apply -f "$ROOT/deploy/agentgateway/gateway.yaml"
     render_namespace "$ROOT/deploy/agentgateway/tenant-auth.yaml.tmpl" "$NAMESPACE"
     kube_apply -f "$RENDERED"
+    kube_apply -f "$ROOT/deploy/agentgateway/tenant-routing.yaml"
+    render_namespace "$ROOT/deploy/agentgateway/tenant-telemetry.yaml.tmpl" "$NAMESPACE"
+    kube_apply -f "$RENDERED"
 }
 
 install_mock() {
@@ -323,6 +341,8 @@ gateway_ready() {
         wait_condition "$NAMESPACE" "gateway/$GATEWAY" Accepted
         wait_condition "$NAMESPACE" "gateway/$GATEWAY" Programmed
         wait_status "$NAMESPACE" agentgatewaypolicy/tenant-auth policy Accepted
+        wait_status "$NAMESPACE" agentgatewaypolicy/tenant-routing policy Accepted
+        wait_status "$NAMESPACE" agentgatewaypolicy/tenant-telemetry policy Accepted
     fi
     local namespace namespaces
     namespaces=$(gateway_namespaces)
@@ -420,6 +440,8 @@ legacy_down() {
         ok "$LEGACY_CLUSTER is already absent"
     fi
     rm -rf -- "$CLUSTER_STATE"
+    # Later temporary files must not recreate the deleted state directory.
+    CLUSTER_STATE=
     if [[ -f "$ROOT/.env" ]]; then
         new_temp; additions=$TEMP_FILE
         printf '{"AGENTGATEWAY_BASE_URL":null,"AGENTGATEWAY_API_KEY":null}\n' >"$additions"

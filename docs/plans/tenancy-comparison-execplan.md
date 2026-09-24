@@ -29,7 +29,8 @@ Two words have fixed meanings in this plan, in the code, and in every document i
 - [x] (2026-09-24 12:50Z) Milestone 1 reviews: the rubber-duck review found 4 blocking and 4 non-blocking issues, all fixed; the security review found none. Recorded in FINDINGS.md.
 - [x] (2026-09-24 13:10Z) Milestone 2: prototypes P1 to P6 all promoted (none needed its fallback); the minimal load runner (scripts/load.sh, deploy/k6/chat.js), the per-tenant install files, mock_push_keys, and the tenant dashboard panels are in place.
 - [x] (2026-09-24 13:35Z) Milestone 2 reviews: the rubber-duck review found 5 blocking and 4 non-blocking issues and the security review 1 low issue, all fixed. Recorded in FINDINGS.md.
-- [ ] Milestone 3: shared-cluster tenants, the Foundry route in the shared cluster, and retirement of the old cluster.
+- [x] (2026-09-24 13:55Z) Milestone 3: shared-cluster tenants (tenant-01 to tenant-03) with measured onboarding and offboarding, per-tenant mock provider keys, the Foundry route, and retirement of the old cluster (`make legacy-down CONFIRM=1` after a real Foundry prompt succeeded through the shared gateway). Development runs made with uncommitted code were deleted; measured runs come from committed code in later milestones.
+- [ ] Milestone 3 reviews: rubber-duck and security review of the Milestone 3 commit, findings recorded in FINDINGS.md.
 - [ ] Milestone 4: dedicated-cluster tenants and the Foundry route in each tenant gateway.
 - [ ] Milestone 5: prompts, load, calibration, and the separation, latency, rollout, and Foundry smoke scenarios.
 - [ ] Milestone 6: the ten deliberate failure modes with automatic restore.
@@ -85,6 +86,10 @@ These facts were found while designing the plan, before any implementation. Each
 
 - Observation: k6 v2.3.0 (2026-09-21) is the latest stable release. Its Prometheus remote-write output keeps one aggregate per time series for the whole run, so the exported percentile values are cumulative, not per push interval. A window's p95 cannot be recovered by subtracting cumulative values.
   Evidence: grafana/k6 v2.3.0 internal/output/prometheusrw/remotewrite/remotewrite.go (the per-series sink is retained and samples are added to it) and config.go (K6_PROMETHEUS_RW_TREND_STATS, K6_PROMETHEUS_RW_PUSH_INTERVAL, K6_PROMETHEUS_RW_STALE_MARKERS, and the native-histogram setting K6_PROMETHEUS_RW_TREND_AS_NATIVE_HISTOGRAM). k6 also timestamps HTTP metrics when a request completes or times out, not when it starts, so a failure can appear seconds after it began.
+
+- Observation (Milestone 3): onboarding in the shared cluster took about 1.0 to 1.9 seconds until the first successful probe and 1.7 to 3.0 seconds until the proxy's configuration showed the tenant's limit; offboarding revoked access within about 0.1 to 0.3 seconds of deleting the key ConfigMap and finished cleaning in 2.4 to 2.9 seconds. These are development runs, not results.
+
+- Observation (Milestone 3): with a single conditional entry, the proxy's configuration dump stores `localRateLimit` as one object rather than a one-element list; the read-back handles both.
 
 - Observation (Milestone 2 review): stopping k6 through `PATCH /v1/status {"stopped": true}` aborts requests still in flight instead of letting them finish, and `{"paused": true}` did not pause a running constant-arrival-rate test. Requests are therefore recorded when they start as well as when they finish, and a start without a finish becomes a censored record.
   Evidence: a stream with 4-second responses stopped mid-run left 70 finished requests and about 20 in flight; the finished records and the summary both omitted the 20 until START lines were added.

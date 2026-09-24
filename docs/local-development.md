@@ -61,6 +61,8 @@ Helm and kubectl output is shown rather than hidden.
 | Section | Commands |
 | --- | --- |
 | Clusters | `up`, `status`, `down CONFIRM=1` |
+| Tenants | `tenant-add`, `tenant-limit`, `tenants`, `tenant-objects`, `gateway-config`, `tenant-remove CONFIRM=1` |
+| Traffic | `prompt` |
 | Observability | `grafana`, `prometheus`, `dashboard`, `logs`, `gateway-forward`, `k9s` |
 | Foundry model | `foundry-register`, `foundry-regions`, `foundry-models`, `foundry-up`, `foundry-status`, `gateway-configure`, `endpoints` |
 | Diagnostics | `doctor`, `check` |
@@ -126,6 +128,48 @@ owner of the provider key it received in `x-mock-key-owner`. It echoes `x-probe-
 `x-mock-probe-id`. Its accepted keys come from Secret `mock-upstream-keys` and can be replaced at
 runtime through its metrics and admin port 8081, which has no authentication and is not exposed
 outside the cluster.
+
+## Tenants
+
+A tenant is one API key and one token-per-minute limit for the whole tenant. Each tenant also has
+its own provider key for the mock upstream, so the comparison can detect a request that reaches
+another tenant's credential. Every tenant in both clusters shares the one Foundry deployment.
+
+```bash
+make tenant-add CLUSTER=shared TENANT=tenant-01 TOKENS_PER_MINUTE=20000
+make tenants CLUSTER=shared
+make tenant-limit CLUSTER=shared TENANT=all TOKENS_PER_MINUTE=30000
+make tenant-objects CLUSTER=shared TENANT=tenant-01
+make gateway-config CLUSTER=shared TENANT=tenant-01
+make prompt CLUSTER=shared TENANT=tenant-01 UPSTREAM=mock PROMPT="Hello"
+make tenant-remove CLUSTER=shared TENANT=tenant-01 CONFIRM=1
+```
+
+Keys live in `.env.tenants` as `<CLUSTER>_<TENANT>_API_KEY` (the gateway key) and
+`<CLUSTER>_<TENANT>_MOCK_KEY` (the mock provider key). The cluster stores only the SHA-256 hash of
+the gateway key. The mock provider key is registered at the mock before a tenant is added, the way
+a tenant would bring a key its provider already accepts.
+
+In the shared cluster, every tenant is a set of entries in `agentgateway-system`: a key ConfigMap
+`tenant-NN-key` (hash, tenant name, and the limit annotation `gateway.dev/tokens-per-minute`), a
+provider Secret `mock-provider-tenant-NN`, and an AgentgatewayBackend `mock-tenant-NN`. Two objects
+are rebuilt from the key ConfigMaps on every change: AgentgatewayPolicy `tenant-limits` (one
+conditional token limit per tenant) and HTTPRoute `mock-chat` (one rule per tenant, matching the
+`x-tenant` header). Policy `tenant-routing` overwrites `x-tenant` with the authenticated tenant after
+key authentication, so a client cannot choose another tenant's route or key. Both lists hold at most
+16 entries, so the shared design as built holds at most 16 tenants; `tenant-add` refuses a 17th.
+
+`tenant-add` and `tenant-remove` measure themselves. A k6 probe sends five requests per second with
+the tenant's key from inside the cluster before anything changes. Onboarding records when the first
+probe succeeded ("usable") and when the proxy's own configuration shows the tenant's limit
+("enforced"). Offboarding waits for a healthy baseline, then records the interval in which access was
+revoked (from the last successful probe to the first of 25 consecutive refusals) and when every
+object holding the tenant is gone ("cleaned"). Times come from the Kind node's clock, the same clock
+that stamps the probe records. Each measurement writes a run record under `results/<cluster>/`.
+
+`make gateway-config` reads what the proxy enforces through the Kind node, never through a host
+port-forward. `make tenant-objects` lists every object that holds a tenant's settings and how many
+tenants share each one (`FORMAT=json` for machine-readable output).
 
 ## Load generation
 
