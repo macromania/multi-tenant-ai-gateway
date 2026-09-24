@@ -26,11 +26,17 @@ validate_plan() {
         (.duration | test("^[0-9]+[sm]$")) and
         ((.start_delay // "0s") | test("^[0-9]+s$")) and
         ((.expected_owner // "tenant-00") | test("^tenant-[0-9]{2}$")) and
+        ((.timeout // "60s") | test("^[0-9]+s$")) and
+        ((.job_memory // "2Gi") | IN("2Gi","4Gi","6Gi","8Gi")) and
         ((.forged_tenant // "tenant-00") | test("^tenant-[0-9]{2}$")) and
         ((.latency_ms // 0) | type == "number" and . >= 0 and . <= 120000) and
         ((.prompt_chars // 40) | type == "number" and . >= 1 and . <= 1000000)) and
-      ([.streams[].name] | length == (unique | length))
-    ' "$1" >/dev/null || die "Invalid load plan $1."
+      ([.streams[].name] | length == (unique | length)) and
+      # kubelet rotates container logs at 10 MiB and kubectl reads only the current file, so the
+      # recorded request count is capped well below that.
+      ([.streams[] | select(.records) | .rate * (.duration | if endswith("m") then rtrimstr("m") | tonumber * 60
+         else rtrimstr("s") | tonumber end)] | add // 0) <= 20000
+    ' "$1" >/dev/null || die "Invalid load plan $1 (fields, names, or more than 20000 recorded requests)."
 }
 
 # Prints a JSON object mapping each key name in the plan to its value from .env.tenants.
@@ -59,16 +65,27 @@ load_resources_delete() {
         --ignore-not-found --wait=false >/dev/null
 }
 
+# Attempts every pending run even if one deletion fails, then reports the failure.
 load_cleanup_pending() {
-    local entry
+    local entry failed=0
     for entry in "${LOAD_PENDING[@]+"${LOAD_PENDING[@]}"}"; do
-        load_resources_delete "${entry%%:*}"
+        load_resources_delete "${entry%%:*}" || failed=1
     done
+    return "$failed"
+}
+
+# The longest stream end in seconds (start delay plus duration).
+plan_seconds() {
+    jq '[.streams[] | ((.start_delay // "0s") | rtrimstr("s") | tonumber) +
+      (.duration | if endswith("m") then (rtrimstr("m") | tonumber * 60) else (rtrimstr("s") | tonumber) end)] | max' "$1"
 }
 
 # load_start <run-id> <probe|attack> <plan-file>: creates the Job and returns at once.
+# The Job is created suspended with a deadline; its key Secret and plan ConfigMap are then created
+# with the Job as their owner, so Kubernetes deletes them with the Job even if this process is
+# killed before its own cleanup runs. Only then is the Job started.
 load_start() {
-    local run=$1 role=$2 plan=$3 name secret keys job resources mounted
+    local run=$1 role=$2 plan=$3 name secret keys job resources mounted deadline uid owner
     validate_run_id "$run"
     [[ "$role" == probe || "$role" == attack ]] || die "Load role must be probe or attack."
     validate_plan "$plan"
@@ -78,28 +95,18 @@ load_start() {
     if [[ ${#LOAD_PENDING[@]} -eq 0 ]]; then on_exit load_cleanup_pending; fi
     LOAD_PENDING+=("$run:$role")
     refresh_k6_scripts
-    new_temp; secret=$TEMP_FILE
-    jq -n --slurpfile keys "$keys" --arg name "$name-keys" --arg run "$run" --arg namespace "$LOAD_NAMESPACE" '{
-      apiVersion:"v1",kind:"Secret",type:"Opaque",
-      metadata:{name:$name,namespace:$namespace,labels:{"gateway.dev/run":$run}},
-      stringData:$keys[0]}' >"$secret"
-    kube_apply -f "$secret" >/dev/null
-    new_temp; mounted=$TEMP_FILE
-    jq --arg run "$run" --arg cluster "$CLUSTER" '. + {run_id:$run, cluster:$cluster}' "$plan" >"$mounted"
-    kube -n "$LOAD_NAMESPACE" create configmap "$name-plan" --from-file=plan.json="$mounted" \
-        --dry-run=client -o json |
-        jq --arg run "$run" '.metadata.labels={"gateway.dev/run":$run}' | kube_apply -f - >/dev/null
+    deadline=$(( $(plan_seconds "$plan") + 300 ))
     if [[ "$role" == probe ]]; then
         resources='{"requests":{"cpu":"1","memory":"512Mi"},"limits":{"cpu":"2","memory":"1Gi"}}'
     else
-        resources='{"requests":{"cpu":"2","memory":"1Gi"},"limits":{"cpu":"4","memory":"2Gi"}}'
+        resources=$(jq -c '{requests:{cpu:"2",memory:"1Gi"},limits:{cpu:"4",memory:([.streams[].job_memory // "2Gi"] | max_by(rtrimstr("Gi") | tonumber))}}' "$plan")
     fi
     new_temp; job=$TEMP_FILE
     jq -n --arg name "$name" --arg run "$run" --arg role "$role" --arg image "$K6_IMAGE" \
-        --arg namespace "$LOAD_NAMESPACE" --argjson resources "$resources" '{
+        --arg namespace "$LOAD_NAMESPACE" --argjson resources "$resources" --argjson deadline "$deadline" '{
       apiVersion:"batch/v1",kind:"Job",
       metadata:{name:$name,namespace:$namespace,labels:{"gateway.dev/run":$run,"gateway.dev/load-role":$role}},
-      spec:{backoffLimit:0,ttlSecondsAfterFinished:3600,template:{
+      spec:{suspend:true,activeDeadlineSeconds:$deadline,backoffLimit:0,ttlSecondsAfterFinished:3600,template:{
         metadata:{labels:{"gateway.dev/run":$run,"gateway.dev/load-role":$role}},
         spec:{restartPolicy:"Never",automountServiceAccountToken:false,enableServiceLinks:false,
           securityContext:{runAsNonRoot:true,runAsUser:12345,runAsGroup:12345,seccompProfile:{type:"RuntimeDefault"}},
@@ -122,6 +129,23 @@ load_start() {
                    {name:"keys",secret:{secretName:($name + "-keys")}},
                    {name:"tmp",emptyDir:{}}]}}}}' >"$job"
     kube_apply -f "$job" >/dev/null
+    uid=$(kube -n "$LOAD_NAMESPACE" get job "$name" -o jsonpath='{.metadata.uid}')
+    [[ "$uid" =~ ^[a-f0-9-]{36}$ ]] || die "Cannot read the UID of Job $name."
+    owner=$(jq -nc --arg name "$name" --arg uid "$uid" '[{apiVersion:"batch/v1",kind:"Job",name:$name,uid:$uid}]')
+    new_temp; secret=$TEMP_FILE
+    jq -n --slurpfile keys "$keys" --arg name "$name-keys" --arg run "$run" --arg namespace "$LOAD_NAMESPACE" \
+        --argjson owner "$owner" '{
+      apiVersion:"v1",kind:"Secret",type:"Opaque",
+      metadata:{name:$name,namespace:$namespace,labels:{"gateway.dev/run":$run},ownerReferences:$owner},
+      stringData:$keys[0]}' >"$secret"
+    kube_apply -f "$secret" >/dev/null
+    new_temp; mounted=$TEMP_FILE
+    jq --arg run "$run" --arg cluster "$CLUSTER" '. + {run_id:$run, cluster:$cluster}' "$plan" >"$mounted"
+    kube -n "$LOAD_NAMESPACE" create configmap "$name-plan" --from-file=plan.json="$mounted" \
+        --dry-run=client -o json |
+        jq --arg run "$run" --argjson owner "$owner" \
+            '.metadata.labels={"gateway.dev/run":$run} | .metadata.ownerReferences=$owner' | kube_apply -f - >/dev/null
+    kube -n "$LOAD_NAMESPACE" patch job "$name" --type=merge -p '{"spec":{"suspend":false}}' >/dev/null
 }
 
 load_state() {
@@ -133,8 +157,10 @@ load_state() {
 load_first_record() {
     local name attempt
     name=$(load_job_name "$1" "$2")
+    local logs
     for ((attempt=0; attempt<180; attempt++)); do
-        if kube -n "$LOAD_NAMESPACE" logs "job/$name" 2>/dev/null | grep -q '^PROBE '; then return; fi
+        logs=$(kube -n "$LOAD_NAMESPACE" logs "job/$name" 2>/dev/null || true)
+        if grep -q '^PROBE ' <<<"$logs"; then return; fi
         [[ "$(load_state "$1" "$2")" != failed ]] || die "Load Job $name failed before its first probe."
         sleep 1
     done
@@ -142,6 +168,7 @@ load_first_record() {
 }
 
 # Asks k6 to stop through its control API, reached from the Kind node at the pod's address.
+# k6 aborts requests still in flight; their START lines let load_finish record them as censored.
 load_stop() {
     local name ip
     name=$(load_job_name "$1" "$2")
@@ -167,18 +194,37 @@ load_wait() {
 # load_finish <run-id> <role> <output directory>: stops the Job if it still runs, saves its
 # summary and per-request records, and deletes its Job, plan, and keys.
 load_finish() {
-    local run=$1 role=$2 out=$3 name log entry kept=()
+    local run=$1 role=$2 out=$3 name log entry kept=() stopped=
     name=$(load_job_name "$run" "$role")
-    if [[ "$(load_state "$run" "$role")" == running ]]; then load_stop "$run" "$role"; fi
+    if [[ "$(load_state "$run" "$role")" == running ]]; then load_stop "$run" "$role"; stopped=1; fi
     load_wait "$run" "$role" 180
     mkdir -p -- "$out"
     new_temp; log=$TEMP_FILE
     kube -n "$LOAD_NAMESPACE" logs "job/$name" >"$log" || die "Cannot read the logs of $name."
-    grep '^PROBE ' "$log" | cut -c7- >"$out/probes-$role.jsonl" || true
+    local finished starts
+    new_temp; finished=$TEMP_FILE
+    new_temp; starts=$TEMP_FILE
+    grep '^PROBE ' "$log" | cut -c7- >"$finished" || true
+    grep '^START ' "$log" | cut -c7- >"$starts" || true
     grep '^K6_SUMMARY ' "$log" | tail -1 | cut -c12- >"$out/k6-summary-$role.json" || true
-    grep -v -E '^(PROBE|K6_SUMMARY) ' "$log" | tail -50 >"$out/k6-$role.log" || true
+    grep -v -E '^(PROBE|START|K6_SUMMARY) ' "$log" | tail -50 >"$out/k6-$role.log" || true
     [[ -s "$out/k6-summary-$role.json" ]] || { cat "$out/k6-$role.log" >&2; die "$name produced no summary."; }
-    [[ "$(load_state "$run" "$role")" == succeeded ]] ||
+    # A request that started but never finished was cut off by the stop and is kept as censored.
+    jq -s -c --slurpfile starts "$starts" '
+      (map({(.probe_id): true}) | add // {}) as $done |
+      . + [$starts[] | select($done[.probe_id] | not) |
+           {stream, probe_id, start_ms, verdict: "censored", status: null, duration_ms: null}] |
+      sort_by(.start_ms)[]' "$finished" >"$out/probes-$role.jsonl"
+    # Every request k6 counted must have a record, and every record a start; otherwise the log was
+    # truncated and the run cannot be trusted.
+    jq -e -s --slurpfile summary "$out/k6-summary-$role.json" --slurpfile starts "$starts" '
+      (group_by(.stream) | map({(.[0].stream): length}) | add // {}) as $records |
+      ($summary[0].streams | to_entries | map(select(.value.recorded)) |
+        all(.[]; ($records[.key] // 0) >= .value.requests)) and
+      (length == ($starts | length))' "$out/probes-$role.jsonl" >/dev/null ||
+        die "$name: the saved records do not cover every request; the log may have been truncated."
+    # k6 exits non-zero when it is stopped through its API, so only an unrequested failure is reported.
+    [[ -n "$stopped" || "$(load_state "$run" "$role")" == succeeded ]] ||
         warn "$name did not finish successfully; its summary is kept for inspection."
     kube -n "$LOAD_NAMESPACE" delete job "$name" --ignore-not-found --wait=false >/dev/null
     kube -n "$LOAD_NAMESPACE" delete configmap "$name-plan" --ignore-not-found >/dev/null
@@ -194,8 +240,7 @@ load_finish() {
 run_load() {
     local seconds
     load_start "$1" "$2" "$3"
-    seconds=$(jq '[.streams[] | ((.start_delay // "0s") | rtrimstr("s") | tonumber) +
-      (.duration | if endswith("m") then (rtrimstr("m") | tonumber * 60) else (rtrimstr("s") | tonumber) end)] | max + 300' "$3")
+    seconds=$(( $(plan_seconds "$3") + 300 ))
     load_wait "$1" "$2" "$seconds"
     load_finish "$1" "$2" "$4"
 }

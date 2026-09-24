@@ -59,7 +59,7 @@ stop_forward() {
 run_hook() {
     (
         set -euo pipefail
-        TEMP_FILES=(); ON_EXIT_HOOKS=(); FORWARD_PID=
+        TEMP_FILES=(); ON_EXIT_HOOKS=(); FORWARD_PID=; LOAD_PENDING=()
         trap cleanup EXIT
         "$1"
     )
@@ -495,13 +495,28 @@ mock_push_keys() {
       metadata:{name:"mock-upstream-keys",namespace:$namespace},stringData:{keys:$keys}}' >"$secret"
     kube_apply -f "$secret" >/dev/null
     expected=$(awk '{print $1}' "$list" | jq -R . | jq -sc 'sort')
-    pods=$(kube -n "$MOCK_NAMESPACE" get pods -l app.kubernetes.io/name=mock \
-        --field-selector=status.phase=Running -o name) || die "Cannot list mock replicas."
-    [[ -n "$pods" ]] || die "No running mock replica."
-    for pod in $pods; do
-        result=$(kube -n "$MOCK_NAMESPACE" exec -i "$pod" -- python -c "$MOCK_POST_KEYS" <"$list") ||
-            die "Cannot update the keys of $pod."
-        [[ "$(jq -c '.owners | sort' <<<"$result")" == "$expected" ]] ||
-            die "$pod did not accept the expected key owners."
+    # A replica that starts during this update may have mounted the previous Secret, so the push
+    # repeats until the same set of ready replicas (by pod and container start) all report the
+    # expected owners twice in a row.
+    local attempt state previous= stable=0
+    kube -n "$MOCK_NAMESPACE" rollout status deployment/mock --timeout=300s >/dev/null
+    for ((attempt=0; attempt<30; attempt++)); do
+        state=$(kube -n "$MOCK_NAMESPACE" get pods -l app.kubernetes.io/name=mock -o json | jq -r '
+          [.items[] | select(.metadata.deletionTimestamp == null) |
+           "\(.metadata.name)/\(.status.containerStatuses[0].restartCount // 0)/\(.status.containerStatuses[0].ready // false)"] |
+          sort | join(" ")') || die "Cannot list mock replicas."
+        [[ -n "$state" && "$state" != *'/false'* ]] || { sleep 2; continue; }
+        pods=$(printf '%s' "$state" | tr ' ' '\n' | cut -d/ -f1)
+        for pod in $pods; do
+            result=$(kube -n "$MOCK_NAMESPACE" exec -i "pod/$pod" -- python -c "$MOCK_POST_KEYS" <"$list") ||
+                die "Cannot update the keys of $pod."
+            [[ "$(jq -c '.owners | sort' <<<"$result")" == "$expected" ]] ||
+                die "$pod did not accept the expected key owners."
+        done
+        if [[ "$state" == "$previous" ]]; then stable=$((stable + 1)); else stable=0; fi
+        previous=$state
+        [[ "$stable" -lt 1 ]] || return 0
+        sleep 1
     done
+    die "Mock replicas did not settle while their keys were being updated."
 }

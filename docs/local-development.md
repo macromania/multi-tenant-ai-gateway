@@ -135,11 +135,16 @@ prompt size, or forged tenant header). Each stream is an open-loop constant-arri
 the offered load stays constant when the system under test slows down. Keys are copied from
 `.env.tenants` into a short-lived Secret and deleted with the Job.
 
-Every mock-bound request gets one verdict: verified (served with the sending tenant's provider key and
-its own probe ID), leak (another tenant's key or a wrong probe ID), blocked (refused by the gateway,
-such as 401 or 429), unverifiable (a 200 without the mock's headers), or failed. Probe streams print
-one `PROBE {json}` line per request, and every Job prints a `K6_SUMMARY {json}` line with per-stream
-counts, dropped iterations, latency percentiles, and verdicts. k6 also pushes its metrics, with
+Every request goes to the mock, directly or through a gateway, and gets one verdict: verified (served
+with the sending tenant's provider key and its own probe ID), leak (another tenant's key or a wrong
+probe ID), blocked (refused by the gateway, such as 401 or 429), unverifiable (a 200 without the
+mock's headers), or failed. Streams with records print a `START {json}` line when a request begins
+and a `PROBE {json}` line when it ends; a request cut off when a run is stopped early is kept as
+censored. Every Job prints a `K6_SUMMARY {json}` line with per-stream counts, dropped iterations,
+latency percentiles, and verdicts. A run whose saved records do not cover every request k6 counted
+is rejected, because kubelet rotates container logs at 10 MiB; plans are capped at 20,000 recorded
+requests. Streams with records get enough VUs for every request to reach its timeout. The key
+Secret and plan ConfigMap are owned by the Job, so Kubernetes deletes them with it. k6 also pushes its metrics, with
 latency as native histograms, to the cluster's Prometheus, where the "Tenants: what the clients saw"
 panels read them.
 

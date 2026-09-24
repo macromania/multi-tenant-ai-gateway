@@ -13,6 +13,12 @@ def panel($title; $unit; $targets; $x; $y; $w):
              tooltip: {mode: "multi", sort: "desc"}},
    targets: [$targets | to_entries[] | {refId: ([65 + .key] | implode), datasource: ds,
                                         expr: .value[0], legendFormat: .value[1]}]};
+# An instant table: k6 publishes a verdict series only when that verdict first occurs, so a single
+# leak has no earlier zero sample for rate() or increase(); totals over the time range show it.
+def table($title; $expr; $x; $y; $w):
+  {type: "table", title: $title, datasource: ds, gridPos: {x: $x, y: $y, w: $w, h: 8},
+   targets: [{refId: "A", datasource: ds, expr: $expr, instant: true, format: "table"}],
+   transformations: [{id: "organize", options: {excludeByName: {Time: true}}}]};
 def row($title; $y): {type: "row", title: $title, collapsed: false, gridPos: {x: 0, y: $y, w: 24, h: 1}, panels: []};
 
 {
@@ -47,8 +53,8 @@ def row($title; $y): {type: "row", title: $title, collapsed: false, gridPos: {x:
        ["histogram_quantile(0.99, sum by (tenant) (rate(k6_http_req_duration_seconds{tenant=~\"$tenant\"}[30s])))", "{{tenant}} p99"]]; 0; 18; 12),
     panel("Client verdicts per second by tenant"; "reqps";
       [["sum by (tenant, verdict) (rate(k6_mtag_verdicts_total{tenant=~\"$tenant\"}[30s]))", "{{tenant}} {{verdict}}"]]; 12; 18; 12),
-    panel("Leaks and unverifiable responses (last 5 minutes)"; "short";
-      [["sum by (tenant, stream) (increase(k6_mtag_verdicts_total{tenant=~\"$tenant\", verdict=~\"leak|unverifiable\"}[5m]))", "{{tenant}} {{stream}}"]]; 0; 26; 12),
+    table("Leaks and unverifiable responses in the selected time range (totals per run and stream)";
+      "sum by (tenant, run_id, stream, verdict) (max_over_time(k6_mtag_verdicts_total{tenant=~\"$tenant\", verdict=~\"leak|unverifiable\"}[$__range]))"; 0; 26; 12),
     panel("Mock upstream requests per second by key owner and status"; "reqps";
       [["sum by (owner, code) (rate(mock_requests_total{owner=~\"$tenant|none\"}[30s]))", "{{owner}} {{code}}"],
        ["sum(mock_in_flight)", "in flight"]]; 12; 26; 12),

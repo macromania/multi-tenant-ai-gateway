@@ -1,6 +1,8 @@
 // Open-loop chat-completions load for the tenancy comparison. One k6 scenario per stream.
 // The plan (/etc/k6/plan/plan.json) and keys (/etc/k6/keys/<name>) are mounted by scripts/load.sh.
-// Probe streams print one "PROBE {json}" line per request; handleSummary prints "K6_SUMMARY {json}".
+// Streams with records print "START {json}" when a request begins and "PROBE {json}" when it ends,
+// so a request cut off by an early stop is still known ("censored"). handleSummary prints
+// "K6_SUMMARY {json}". Every request goes to the mock, directly or through a gateway.
 import http from 'k6/http';
 import exec from 'k6/execution';
 import { Counter } from 'k6/metrics';
@@ -8,24 +10,42 @@ import { Counter } from 'k6/metrics';
 const plan = JSON.parse(open('/etc/k6/plan/plan.json'));
 const keys = {};
 const streams = {};
-for (const stream of plan.streams) {
-  keys[stream.key] = open(`/etc/k6/keys/${stream.key}`).trim();
-  const promptChars = stream.prompt_chars || 40;
-  stream.body = JSON.stringify({
+// Bodies above this size are built per request instead of kept by every VU for the whole run.
+const LARGE_BODY_CHARS = 8192;
+function body(stream) {
+  return JSON.stringify({
     model: stream.model || 'mock-chat',
-    messages: [{ role: 'user', content: 'x'.repeat(promptChars) }],
+    messages: [{ role: 'user', content: 'x'.repeat(stream.prompt_chars || 40) }],
     max_completion_tokens: stream.max_completion_tokens || 16,
   });
+}
+for (const stream of plan.streams) {
+  keys[stream.key] = open(`/etc/k6/keys/${stream.key}`).trim();
+  stream.expected_owner = stream.expected_owner || stream.tenant;
+  if ((stream.prompt_chars || 40) <= LARGE_BODY_CHARS) stream.body = body(stream);
   streams[stream.name] = stream;
 }
 
 const verdicts = new Counter('mtag_verdicts');
 
+function seconds(value) {
+  const match = /^([0-9]+)(s|m)$/.exec(value || '60s');
+  return Number(match[1]) * (match[2] === 'm' ? 60 : 1);
+}
+
+// Streams with records must keep sending while the system slows down, so they get enough VUs for
+// every request to run to its timeout. Other streams are sized for their mock latency.
 function vus(stream) {
-  const latencies = [stream.latency_ms || 100].concat((stream.latency_schedule || []).map((step) => step.latency_ms));
-  const seconds = Math.max(...latencies) / 1000 + 0.5;
-  const needed = Math.ceil(stream.rate * seconds * 1.5) + 2;
-  return { preAllocatedVUs: Math.min(needed, stream.max_vus || 4000), maxVUs: Math.min(needed * 2, stream.max_vus || 4000) };
+  let lifetime;
+  if (stream.records) {
+    lifetime = seconds(stream.timeout) + 1;
+  } else {
+    const latencies = [stream.latency_ms || 100].concat((stream.latency_schedule || []).map((step) => step.latency_ms));
+    lifetime = Math.max(...latencies) / 1000 + 0.5;
+  }
+  const needed = Math.ceil(stream.rate * lifetime * 1.2) + 2;
+  const cap = stream.max_vus || 4000;
+  return { preAllocatedVUs: Math.min(needed, cap), maxVUs: Math.min(needed * 2, cap) };
 }
 
 const scenarios = {};
@@ -73,7 +93,6 @@ function latencyFor(stream) {
 function verdictFor(stream, response, probeId) {
   const owner = response.headers['X-Mock-Key-Owner'];
   const echoed = response.headers['X-Mock-Probe-Id'];
-  if (!stream.mock) return response.status === 200 ? 'verified' : (response.status >= 400 && response.status < 500 ? 'blocked' : 'failed');
   if (owner !== undefined) {
     if (owner !== 'none' && owner !== stream.expected_owner) return 'leak';
     if (echoed !== probeId) return 'leak';
@@ -93,7 +112,8 @@ export function run() {
   if (stream.forged_tenant) headers['x-tenant'] = stream.forged_tenant;
   if (stream.corrupt_id) headers['x-mock-corrupt-id'] = '1';
   const start = Date.now();
-  const response = http.post(stream.url, stream.body, { headers, timeout: stream.timeout || '60s' });
+  if (stream.records) console.log('START ' + JSON.stringify({ stream: stream.name, probe_id: probeId, start_ms: start }));
+  const response = http.post(stream.url, stream.body || body(stream), { headers, timeout: stream.timeout || '60s' });
   const verdict = verdictFor(stream, response, probeId);
   verdicts.add(1, { verdict });
   if (stream.records) {
@@ -122,6 +142,7 @@ export function handleSummary(data) {
     const dropped = values(`dropped_iterations{scenario:${stream.name}}`);
     perStream[stream.name] = {
       tenant: stream.tenant, role: stream.role || null, target_rate: stream.rate, duration: stream.duration,
+      recorded: Boolean(stream.records),
       requests: requests ? requests.count : 0, iterations: iterations ? iterations.count : 0,
       dropped_iterations: dropped ? dropped.count : 0,
       failed_rate: (values(`http_req_failed{stream:${stream.name}}`) || { rate: 0 }).rate,

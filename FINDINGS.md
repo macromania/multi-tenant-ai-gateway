@@ -80,3 +80,28 @@ Reviewed commit `e5fff1d`. Fixes are in the commit "Fix the Milestone 1 review f
 No vulnerabilities were found in the commit. The reviewer noted that one of its own failed diagnostic
 queries could have written Secret data to a temporary file, and deleted those files without reading
 them.
+
+
+## Milestone 2: prototypes and the load runner
+
+Reviewed commit `05add5d`. Fixes are in the commit "Fix the Milestone 2 review findings".
+
+### Rubber-duck review (9 findings)
+
+| # | Severity | Finding | Resolution | Status |
+| --- | --- | --- | --- | --- |
+| 1 | Blocking | Stopping k6 through its API aborts requests still in flight, so their records disappeared and the summary under-counted them. Pausing first had no effect in a live test. | Streams with records print a `START` line when a request begins; at the end, a start without a finished record becomes a `censored` record. A stopped run with 4-second responses kept 70 finished and 20 censored requests. | Fixed |
+| 2 | Blocking | A plan without `mock: true` marked every 200 as verified, and `mock: true` without `expected_owner` marked every real response as a leak. | Every stream is checked against the mock, and the expected owner defaults to the stream's tenant. A control using another tenant's key without either field was classified as a leak on all 36 requests. | Fixed |
+| 3 | Blocking | The memory profile (256 KiB prompts, about 1,500 in flight) OOM-killed k6 at its 2 GiB limit. | Large bodies are built per request instead of kept by every VU, and a plan can request more k6 memory (`job_memory`). At 6 GiB the profile completed 3,000 requests with no drops at 1,512 in flight; k6 peaked at 3.7 GiB. | Fixed |
+| 4 | Blocking | Probe VUs were sized for normal latency, so a slowdown beyond about 2.8 seconds dropped probe iterations exactly when a victim needed measuring. | Streams with records get enough VUs for every request to reach its timeout. The 4-second stream above dropped none. | Fixed |
+| 5 | Blocking | kubelet rotates container logs at 10 MiB and `kubectl logs` reads only the current file, so long recorded runs could lose early records while the summary still looked complete. | Plans are capped at 20,000 recorded requests, and `load_finish` rejects a run unless every counted request has a record and every record a start. | Fixed |
+| 6 | Non-blocking | A load started inside a cleanup hook inherited the parent's pending list and registered no cleanup of its own. | `run_hook` clears the pending list, so each context registers its own cleanup. | Fixed |
+| 7 | Non-blocking | `mock_push_keys` pushed once to the running replicas, so a replica starting with the previous Secret could keep old keys. | It waits for the rollout, then pushes until the same ready replicas (by pod and restart count) report the expected owners twice in a row. | Fixed |
+| 8 | Non-blocking | `grep -q` exits at the first match, and with `pipefail` the producer's SIGPIPE could turn a found probe into a failure. | Logs are captured into a variable before searching. | Fixed |
+| 9 | Non-blocking | k6 publishes a verdict counter only when that verdict first occurs, so `increase()` could not show a single leak. | The leak panel is a table of totals per run and stream over the selected time range. | Fixed |
+
+### Security review (1 finding)
+
+| # | Severity | Finding | Resolution | Status |
+| --- | --- | --- | --- | --- |
+| 1 | LOW | Load Secrets holding raw tenant keys had no owner or expiry, so a runner killed before its cleanup could leave them in the cluster indefinitely, and cleanup stopped at the first failed deletion. | Jobs are created suspended with a deadline, their key Secret and plan ConfigMap are owned by the Job (Kubernetes deletes them with it, verified in 1 second), and then the Job starts. Cleanup attempts every pending run and reports failures at the end. | Fixed |
