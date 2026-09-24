@@ -70,6 +70,7 @@ class Workflows(unittest.TestCase):
         for heading in ("LOCAL ENVIRONMENT", "FOUNDRY MODEL", "PROMPTING", "DIAGNOSTICS", "CLEANUP"):
             self.assertIn(heading, result.stdout)
         self.assertIn("make k9s", result.stdout)
+        self.assertIn("make dashboard", result.stdout)
         self.assertNotIn("\x1b", result.stdout + result.stderr)
         self.assertFalse((self.state / "cluster.json").exists())
 
@@ -138,6 +139,27 @@ class Workflows(unittest.TestCase):
         (self.state / "kubeconfig").unlink()
         self.run_make("k9s", success=False)
         self.assertFalse(any(call["tool"] == "k9s" for call in self.calls()))
+
+    def test_dashboard_uses_project_admin_port_and_propagates_failure(self):
+        self.up()
+        result = self.run_make("dashboard", env={"MOCK_FORWARD_EXIT": "0"})
+        forwards = [call["args"] for call in self.calls()
+                    if call["tool"] == "kubectl" and "38473:15000" in call["args"]]
+        self.assertEqual(forwards, [[
+            "--kubeconfig", str(self.state / "kubeconfig"),
+            "--context", "kind-multi-tenant-ai-gateway",
+            "-n", "agentgateway-system", "port-forward", "--address", "127.0.0.1",
+            "deployment/agentgateway-proxy", "38473:15000",
+        ]])
+        self.assertIn("http://127.0.0.1:38473/ui/", result.stderr)
+        self.run_make("dashboard", success=False, env={"MOCK_FORWARD_EXIT": "7"})
+
+    def test_dashboard_refuses_busy_port_or_wrong_context(self):
+        self.up()
+        self.run_make("dashboard", success=False, env={"MOCK_BUSY": "1"})
+        self.run_make("dashboard", success=False, env={"MOCK_WRONG_CONTEXT": "1"})
+        self.assertFalse(any(call["tool"] == "kubectl" and "38473:15000" in call["args"]
+                             for call in self.calls()))
 
     def test_chart_failure_is_not_success(self):
         self.run_make("up", success=False, env={"MOCK_HELM_FAIL": "1"})

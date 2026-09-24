@@ -28,6 +28,15 @@ With K9s installed, browse the project cluster using its local kubeconfig:
 make k9s
 ```
 
+To view agentgateway's built-in read-only dashboard:
+
+```bash
+make dashboard
+```
+
+Open http://127.0.0.1:38473/ui/ while the command runs. Press Ctrl-C to stop
+forwarding.
+
 ## Connect a model
 
 Azure CLI 2.80 or later and an active `az login` are required.

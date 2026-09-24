@@ -29,7 +29,7 @@ spinners or progress animations that hide errors.
 
 | Section | Commands |
 | --- | --- |
-| Local environment | `up`, `status`, `k9s`, `gateway-forward` |
+| Local environment | `up`, `status`, `k9s`, `dashboard`, `gateway-forward` |
 | Foundry model | `foundry-register`, `foundry-regions`, `foundry-models`, `foundry-up`, `foundry-status`, `gateway-configure`, `endpoints` |
 | Prompting | `prompt` |
 | Diagnostics | `doctor`, `check`, `logs`, `test` |
@@ -66,17 +66,35 @@ switch your global contexts.
 | 38470 | Foreground gateway access for curl, clients, and SDKs |
 | 38471 | Kind Kubernetes API |
 | 38472 | Temporary connection owned by `check`, `prompt`, or gateway configuration |
-| 38473 through 38479 | Reserved for future project use |
+| 38473 | Foreground access to the built-in gateway dashboard |
+| 38474 through 38479 | Reserved for future project use |
 
 All host listeners bind to `127.0.0.1`. Internal Service/container ports do not
 reserve host ports. The gateway Service is ClusterIP, not NodePort or LoadBalancer.
-No ingress controller, load balancer addon, admin UI, metrics forward, or browser
-is started.
+No ingress controller, load balancer addon, metrics forward, or browser is
+started. The dashboard forward starts only when explicitly requested.
 
 Do not run independent lifecycle/configuration commands concurrently.
 `make -j up` still runs its stages in order, but separate shells can contend
 for the same resource or temporary port. Occupied ports cause failure; the
 scripts never kill another process to reclaim one.
+
+## Gateway dashboard
+
+```bash
+make dashboard
+```
+
+Open http://127.0.0.1:38473/ui/ in your browser and keep the command running.
+Ctrl-C stops forwarding. The command verifies the project kubeconfig and context,
+then forwards the proxy deployment's admin port 15000 to the localhost port
+defined by `DASHBOARD_PORT` in `ports.env`.
+
+Agentgateway's built-in UI is read-only in Kubernetes mode. It shows the
+configuration received by the proxy, including listeners, routes, and policies;
+configuration changes still go through Kubernetes resources and Make commands.
+The admin endpoint is not exposed by a Service and is separate from the
+API-key-protected model route. Do not expose this port publicly.
 
 ## Foundry registration and region selection
 

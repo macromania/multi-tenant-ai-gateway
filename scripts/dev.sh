@@ -10,6 +10,7 @@ help_menu() {
     row 'make up' 'Start Kind and install agentgateway'
     row 'make status' 'Show local readiness and routing'
     row 'make k9s' 'Open K9s using the project kubeconfig'
+    row 'make dashboard' 'Expose the read-only gateway UI on localhost'
     row 'make gateway-forward' 'Open local gateway access until Ctrl-C'
     section 'FOUNDRY MODEL'
     row 'make foundry-register' 'Register the Azure service after confirmation'
@@ -209,6 +210,15 @@ case "${1:-help}" in
         exec k9s --kubeconfig "$KUBECONFIG_FILE" --context "$CONTEXT"
         ;;
     logs) verify_context; kube -n "$NAMESPACE" logs -f "deployment/$GATEWAY" --tail=100 ;;
+    dashboard)
+        verify_context; port_free "$DASHBOARD_PORT"
+        section 'GATEWAY DASHBOARD'
+        info "Open http://127.0.0.1:$DASHBOARD_PORT/ui/ in your browser."
+        info 'Read-only Kubernetes UI. Keep this command running; Ctrl-C stops forwarding.'
+        exec kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$CONTEXT" \
+            -n "$NAMESPACE" port-forward --address 127.0.0.1 \
+            "deployment/$GATEWAY" "$DASHBOARD_PORT:15000"
+        ;;
     gateway-forward)
         verify_context; port_free "$GATEWAY_PORT"
         section 'GATEWAY ACCESS'

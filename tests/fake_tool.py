@@ -150,8 +150,10 @@ elif tool == "kubectl":
             config["clusters"][0]["cluster"]["server"] = "https://unrelated.example"
         output(config)
     elif "port-forward" in args:
-        port = args[-1].split(":")[0]
-        print(f"Forwarding from 127.0.0.1:{port} -> 80", flush=True)
+        port, target = args[-1].split(":")
+        print(f"Forwarding from 127.0.0.1:{port} -> {target}", flush=True)
+        if "MOCK_FORWARD_EXIT" in os.environ:
+            sys.exit(int(os.environ["MOCK_FORWARD_EXIT"]))
         signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
         while True:
             time.sleep(1)

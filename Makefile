@@ -15,11 +15,11 @@ override CAPACITY := $(value CAPACITY)
 override CONFIRM := $(value CONFIRM)
 export PROMPT PROMPT_FILE FORMAT REGION MODEL MODEL_VERSION SKU CAPACITY CONFIRM
 
-.PHONY: help doctor up cluster-up gateway-install status k9s logs gateway-forward check test
+.PHONY: help doctor up cluster-up gateway-install status k9s dashboard logs gateway-forward check test
 .PHONY: foundry-register foundry-regions foundry-models foundry-up foundry-status
 .PHONY: gateway-configure endpoints prompt down foundry-down
 
-help doctor up cluster-up gateway-install status k9s logs gateway-forward check down:
+help doctor up cluster-up gateway-install status k9s dashboard logs gateway-forward check down:
 	@/bin/bash scripts/dev.sh $@
 
 foundry-register foundry-regions foundry-models foundry-up foundry-status gateway-configure endpoints foundry-down:
