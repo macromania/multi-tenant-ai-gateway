@@ -211,11 +211,10 @@ install_agentgateway_crds() {
         crd/agentgatewaypolicies.agentgateway.dev --for=condition=Established --timeout=120s
 }
 
+# Sets RENDERED to a temporary copy of a template with its namespace filled in.
 render_namespace() {
-    local file
-    new_temp; file=$TEMP_FILE
-    sed "s/@NAMESPACE@/$2/g" "$1" >"$file"
-    printf '%s' "$file"
+    new_temp; RENDERED=$TEMP_FILE
+    sed "s/@NAMESPACE@/$2/g" "$1" >"$RENDERED"
 }
 
 install_shared_gateway() {
@@ -224,16 +223,21 @@ install_shared_gateway() {
         --version "$AGENTGATEWAY_VERSION" --namespace "$NAMESPACE" \
         --values "$ROOT/deploy/agentgateway/values.yaml" --wait --timeout 5m
     kube_apply -f "$ROOT/deploy/agentgateway/gateway.yaml"
-    kube_apply -f "$(render_namespace "$ROOT/deploy/agentgateway/tenant-auth.yaml.tmpl" "$NAMESPACE")"
+    render_namespace "$ROOT/deploy/agentgateway/tenant-auth.yaml.tmpl" "$NAMESPACE"
+    kube_apply -f "$RENDERED"
 }
 
 install_mock() {
     section 'MOCK UPSTREAM'
-    local manifest secret digest
+    local manifest secret digest existing
     apply_namespace "$MOCK_NAMESPACE" mock-upstream
     kube -n "$MOCK_NAMESPACE" create configmap mock-server \
         --from-file=server.py="$ROOT/deploy/mock/server.py" --dry-run=client -o json | kube_apply -f - >/dev/null
-    if ! kube -n "$MOCK_NAMESPACE" get secret mock-upstream-keys >/dev/null 2>&1; then
+    # Only a successful lookup that finds nothing creates the empty key Secret; an existing one
+    # holds the tenants' provider keys and is never overwritten here.
+    existing=$(kube -n "$MOCK_NAMESPACE" get secret mock-upstream-keys --ignore-not-found -o name) ||
+        die "Cannot read the mock key Secret."
+    if [[ -z "$existing" ]]; then
         new_temp; secret=$TEMP_FILE
         jq -n --arg namespace "$MOCK_NAMESPACE" '{apiVersion:"v1",kind:"Secret",type:"Opaque",
           metadata:{name:"mock-upstream-keys",namespace:$namespace},stringData:{keys:""}}' >"$secret"
@@ -298,10 +302,20 @@ tenant_gateway_ready() {
     wait_status "$namespace" agentgatewaypolicy/tenant-auth policy Accepted
 }
 
-gateway_ready() {
-    verify_context
+shared_components_ready() {
+    kube wait crd/gateways.gateway.networking.k8s.io crd/httproutes.gateway.networking.k8s.io \
+        crd/agentgatewaypolicies.agentgateway.dev crd/agentgatewaybackends.agentgateway.dev \
+        crd/podmonitors.monitoring.coreos.com --for=condition=Established --timeout=120s >/dev/null
+    kube -n "$MONITORING_NAMESPACE" rollout status deployment/prometheus-operator --timeout=300s
+    kube -n "$MONITORING_NAMESPACE" rollout status deployment/kube-state-metrics --timeout=300s
+    kube -n "$MONITORING_NAMESPACE" rollout status statefulset/prometheus-monitoring --timeout=300s
     kube -n "$MONITORING_NAMESPACE" rollout status deployment/grafana --timeout=300s
     kube -n "$MOCK_NAMESPACE" rollout status deployment/mock --timeout=300s
+}
+
+gateway_ready() {
+    verify_context
+    shared_components_ready
     if [[ "$CLUSTER" == shared ]]; then
         kube -n "$NAMESPACE" rollout status deployment/agentgateway --timeout=300s
         kube -n "$NAMESPACE" rollout status "deployment/$GATEWAY" --timeout=300s
@@ -309,12 +323,13 @@ gateway_ready() {
         wait_condition "$NAMESPACE" "gateway/$GATEWAY" Accepted
         wait_condition "$NAMESPACE" "gateway/$GATEWAY" Programmed
         wait_status "$NAMESPACE" agentgatewaypolicy/tenant-auth policy Accepted
-    else
-        local namespace
-        for namespace in $(gateway_namespaces); do tenant_gateway_ready "$namespace"; done
     fi
-    local namespace
-    for namespace in $(gateway_namespaces); do
+    local namespace namespaces
+    namespaces=$(gateway_namespaces)
+    if [[ "$CLUSTER" == dedicated ]]; then
+        for namespace in $namespaces; do tenant_gateway_ready "$namespace"; done
+    fi
+    for namespace in $namespaces; do
         [[ "$(kube -n "$namespace" get "service/$GATEWAY" -o jsonpath='{.spec.type}')" == ClusterIP ]] ||
             die "The gateway in $namespace must use a ClusterIP Service."
     done
@@ -323,8 +338,9 @@ gateway_ready() {
 check_gateway() {
     section "GATEWAY CHECK | $(printf '%s' "$CLUSTER" | tr '[:lower:]' '[:upper:]')"
     gateway_ready
-    local namespaces namespace tenant checked=0
+    local namespaces namespace tenant tenants checked=0
     namespaces=$(gateway_namespaces)
+    load_tenant_env
     if [[ -z "$namespaces" ]]; then
         ok 'No tenant gateways exist yet; shared components are ready'
         return
@@ -334,7 +350,8 @@ check_gateway() {
         http_call "http://127.0.0.1:$REQUEST_PORT/v1/chat/completions"
         [[ "$HTTP_STATUS" == 401 ]] || die "$namespace: requests without a key must get 401, got $HTTP_STATUS."
         ok "$namespace rejects requests without a key"
-        for tenant in $(tenants_served_by "$namespace"); do
+        tenants=$(tenants_served_by "$namespace")
+        for tenant in $tenants; do
             tenant_header "$tenant"
             http_call "http://127.0.0.1:$REQUEST_PORT/__gateway_unmatched__" "$HEADER_FILE"
             [[ "$HTTP_STATUS" == 404 ]] || die "$tenant: expected 404 for an unmatched path, got $HTTP_STATUS."
@@ -352,7 +369,7 @@ status() {
     if ! cluster_exists; then warn "$KIND_CLUSTER does not exist. Run make up CLUSTER=$CLUSTER."; return; fi
     verify_context
     section 'WORKLOADS'
-    kube get pods -A -l 'app.kubernetes.io/name in (agentgateway,agentgateway-proxy,mock,grafana)' \
+    kube get pods -A -l 'app.kubernetes.io/name in (agentgateway,agentgateway-proxy,mock,grafana,prometheus,kube-state-metrics,kube-prometheus-stack-prometheus-operator)' \
         -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,READY:.status.containerStatuses[*].ready,RESTARTS:.status.containerStatuses[*].restartCount'
     section 'GATEWAYS AND ROUTING'
     kube get gatewayclass

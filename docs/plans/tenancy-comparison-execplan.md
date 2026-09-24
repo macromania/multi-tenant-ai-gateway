@@ -26,7 +26,7 @@ Two words have fixed meanings in this plan, in the code, and in every document i
 - [x] (2026-09-24 10:40Z) Scope update from the user: cross-tenant leakage added (per-tenant mock provider keys, an always-on check, two new failures); shared provider quota exhaustion parked.
 - [x] (2026-09-24 12:55Z) Second, focused rubber-duck pass; its six remaining findings and five partial resolutions folded in; scale sweep shortened to 1, 5, and 10 by the user.
 - [x] (2026-09-24 12:40Z) Milestone 1: both clusters start from the same commands, with the mock upstream and observability, and the offline fake-tool tests are removed. Also done early: foundry.sh and prompt.sh became cluster-aware (planned for Milestone 3), because `make up` restores the Foundry connection and would otherwise have used the retired single-user key.
-- [ ] Milestone 1 reviews: rubber-duck and security review of the Milestone 1 commit, findings recorded in FINDINGS.md.
+- [x] (2026-09-24 12:50Z) Milestone 1 reviews: the rubber-duck review found 4 blocking and 4 non-blocking issues, all fixed; the security review found none. Recorded in FINDINGS.md.
 - [ ] Milestone 2: prototypes prove or replace each gateway feature the designs depend on.
 - [ ] Milestone 3: shared-cluster tenants, the Foundry route in the shared cluster, and retirement of the old cluster.
 - [ ] Milestone 4: dedicated-cluster tenants and the Foundry route in each tenant gateway.

@@ -1,4 +1,6 @@
 # Renders the mtag-tenants Grafana dashboard. Run with: jq -n --arg cluster <shared|dedicated> -f tenants.jq
+# cAdvisor updates container CPU every 10 to 20 seconds, so rates over container metrics use 2-minute
+# windows even though the kubelet is scraped every 5 seconds.
 # Gateway pods are the controllers and proxies in agentgateway-system and the tenant namespaces.
 
 def gw: "namespace=~\"agentgateway-system|tenant-[0-9]+\", container!=\"\", container!=\"POD\"";
@@ -34,9 +36,9 @@ def row($title; $y): {type: "row", title: $title, collapsed: false, gridPos: {x:
       [["sum(mock_in_flight)", "in flight"]]; 12; 1; 12),
     row("Gateway pods (controllers and proxies)"; 9),
     panel("CPU by pod"; "cores";
-      [["sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{" + gw + "}[30s]))", "{{namespace}}/{{pod}}"]]; 0; 10; 12),
+      [["sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{" + gw + "}[2m]))", "{{namespace}}/{{pod}}"]]; 0; 10; 12),
     panel("CPU throttling by pod"; "percentunit";
-      [["sum by (namespace, pod) (rate(container_cpu_cfs_throttled_periods_total{" + gw + "}[30s])) / sum by (namespace, pod) (rate(container_cpu_cfs_periods_total{" + gw + "}[30s]))", "{{namespace}}/{{pod}}"]]; 12; 10; 12),
+      [["sum by (namespace, pod) (rate(container_cpu_cfs_throttled_periods_total{" + gw + "}[2m])) / sum by (namespace, pod) (rate(container_cpu_cfs_periods_total{" + gw + "}[2m]))", "{{namespace}}/{{pod}}"]]; 12; 10; 12),
     panel("Working-set memory by pod"; "bytes";
       [["sum by (namespace, pod) (container_memory_working_set_bytes{" + gw + "})", "{{namespace}}/{{pod}}"]]; 0; 18; 12),
     panel("Gateway pods, restarts, and OOM kills"; "short";
@@ -45,8 +47,8 @@ def row($title; $y): {type: "row", title: $title, collapsed: false, gridPos: {x:
        ["sum(kube_pod_container_status_last_terminated_reason{namespace=~\"agentgateway-system|tenant-[0-9]+\", reason=\"OOMKilled\"})", "last terminated by OOM"]]; 12; 18; 12),
     row("Measurement apparatus"; 26),
     panel("Mock upstream CPU and throttling"; "short";
-      [["sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"mock-upstream\", container=\"mock\"}[30s]))", "{{pod}} cores"],
-       ["sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"mock-upstream\", container=\"mock\"}[30s])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=\"mock-upstream\", container=\"mock\"}[30s]))", "{{pod}} throttled"]]; 0; 27; 12),
+      [["sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"mock-upstream\", container=\"mock\"}[2m]))", "{{pod}} cores"],
+       ["sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"mock-upstream\", container=\"mock\"}[2m])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=\"mock-upstream\", container=\"mock\"}[2m]))", "{{pod}} throttled"]]; 0; 27; 12),
     panel("Prometheus head series"; "short";
       [["prometheus_tsdb_head_series", "head series"]]; 12; 27; 12)
   ]

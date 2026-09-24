@@ -102,6 +102,7 @@ select_cluster() {
             GRAFANA_PORT=$DEDICATED_GRAFANA_PORT; PROMETHEUS_PORT=$DEDICATED_PROMETHEUS_PORT ;;
         *) die "Set CLUSTER=shared or CLUSTER=dedicated. No cluster is ever chosen for you." ;;
     esac
+    NODE_ID=
     KIND_CLUSTER="mtag-$CLUSTER"
     CONTEXT="kind-$KIND_CLUSTER"
     CLUSTER_STATE="$STATE/$CLUSTER"
@@ -197,7 +198,7 @@ save_env_file() {
         printf '{}\n' >"$existing"
     fi
     new_temp; result=$TEMP_FILE
-    jq -er --slurpfile addition "$additions" '
+    jq -r --slurpfile addition "$additions" '
       . + $addition[0] | with_entries(select(.value != null)) | to_entries | sort_by(.key)[] |
       if (.key | test("^[A-Z_][A-Z0-9_]*$")) and
          (.value | type == "string" and (test("[\\r\\n]") | not))
@@ -223,8 +224,10 @@ tenant_key_name() {
     printf '%s_%s_%s_KEY' "$upper_cluster" "$upper_tenant" "$2"
 }
 
+# Callers load .env.tenants first (load_tenant_env), because this usually runs inside a command
+# substitution, where a lazily created temporary file would escape the exit cleanup.
 tenant_key() {
-    [[ -n "$TENANT_JSON" ]] || load_tenant_env
+    [[ -n "$TENANT_JSON" ]] || die "Internal error: .env.tenants was not loaded before reading a key."
     local value
     value=$(jq -r --arg key "$(tenant_key_name "$1" "$2")" '.[$key] // empty' "$TENANT_JSON")
     [[ "$value" =~ ^[a-f0-9]{64}$ ]] ||
@@ -368,6 +371,7 @@ start_forward() {
 # appears in a process argument.
 tenant_header() {
     local key
+    [[ -n "$TENANT_JSON" ]] || load_tenant_env
     key=$(tenant_key "$1" API)
     new_temp; HEADER_FILE=$TEMP_FILE
     printf 'Authorization: Bearer %s\n' "$key" >"$HEADER_FILE"
@@ -436,10 +440,13 @@ tenant_list() {
 }
 
 tenants_served_by() {
+    local found
     if [[ "$CLUSTER" == shared ]]; then
         tenant_list
-    elif kube -n "$1" get configmap tenant-key >/dev/null 2>&1; then
-        printf '%s\n' "$1"
+    else
+        found=$(kube -n "$1" get configmap tenant-key --ignore-not-found -o name) ||
+            die "Cannot read the tenant key in $1."
+        if [[ -n "$found" ]]; then printf '%s\n' "$1"; fi
     fi
 }
 

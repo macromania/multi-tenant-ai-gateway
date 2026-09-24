@@ -465,8 +465,9 @@ endpoints() {
     info "Foundry project: $(config AZURE_FOUNDRY_PROJECT_ENDPOINT)"
     info "Foundry inference: $(config AZURE_MODEL_BASE_URL)"
     info "Deployment: $(config AZURE_MODEL_DEPLOYMENT)"
-    local namespace
-    for namespace in $(gateway_namespaces); do
+    local namespace namespaces
+    namespaces=$(gateway_namespaces)
+    for namespace in $namespaces; do
         if [[ "$CLUSTER" == shared ]]; then
             info "Gateway for every tenant: make gateway-forward CLUSTER=shared -> http://127.0.0.1:$GATEWAY_PORT/v1"
         else
@@ -495,8 +496,9 @@ remove_cluster_connection() {
     select_cluster
     cluster_exists || return 0
     verify_context
-    local namespace
-    for namespace in $(gateway_namespaces); do
+    local namespace namespaces
+    namespaces=$(gateway_namespaces)
+    for namespace in $namespaces; do
         kube -n "$namespace" delete httproute foundry-chat --ignore-not-found
         kube -n "$namespace" delete agentgatewaybackend foundry-model --ignore-not-found
         kube -n "$namespace" delete secret foundry-provider --ignore-not-found

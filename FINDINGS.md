@@ -56,3 +56,27 @@ Rubber-duck findings use Blocking and Non-blocking.
 | 4 | Blocking | Dedicated offboarding waited for a GatewayClass that nothing deletes. | The tenant's GatewayClass is deleted explicitly; revocation is reported as a bounded interval. | Fixed in plan |
 | 5 | Blocking | Onboarding used the probe runner and authentication before the milestones that introduced them. | tenant-auth moved to Milestone 1 and the probe runner to Milestone 2. | Fixed in plan |
 | 6 | Non-blocking | The dedicated wrong-credential test used a missing Secret, not the same wrong key as the shared test. | Two halves in both designs: a reference mistake and a value mistake. | Fixed in plan |
+
+
+## Milestone 1: two clusters from the same commands
+
+Reviewed commit `e5fff1d`. Fixes are in the commit "Fix the Milestone 1 review findings".
+
+### Rubber-duck review (8 findings)
+
+| # | Severity | Finding | Resolution | Status |
+| --- | --- | --- | --- | --- |
+| 1 | Blocking | `for ... in $(gateway_namespaces)` discards a failed lookup, so cleanup could report success while Foundry objects remained, and `check` could pass with "0 tenant keys checked". | Every list is captured in a plain, checked assignment before the loop; `tenants_served_by` now fails on an API error instead of treating it as "no tenant". | Fixed |
+| 2 | Blocking | Any failed `get secret mock-upstream-keys` was treated as "not found", so a transient API error could overwrite the tenants' provider keys with an empty list. | The empty Secret is created only when a successful `--ignore-not-found` lookup finds nothing. | Fixed |
+| 3 | Blocking | The mock kept each request body referenced during its simulated latency and while waiting for the next request on a keep-alive connection. | The body is parsed into a few small values and every reference is dropped before sleeping. Forty 256 KiB requests in flight now add about 2.6 MB instead of about 10 MB. | Fixed |
+| 4 | Blocking | Removing the last key from a credential file failed, because `jq -e` treats empty output as an error. | `save_env_file` accepts an empty result; removing the last test key now leaves an empty 0600 file. | Fixed |
+| 5 | Non-blocking | `select_cluster` did not clear the cached node ID, so reselecting a cluster in the same process could reach the previous cluster's node. | `select_cluster` clears `NODE_ID`. | Fixed |
+| 6 | Non-blocking | `tenant_key` loaded `.env.tenants` lazily inside a command substitution, and `render_namespace` created its file inside one, so those temporary files escaped exit cleanup. | Callers load `.env.tenants` in the parent shell first; `render_namespace` sets a variable instead of printing a path. | Fixed |
+| 7 | Non-blocking | `check` never confirmed Prometheus, the operator, kube-state-metrics, or the CRDs. | `shared_components_ready` checks all of them; `status` lists them. | Fixed |
+| 8 | Non-blocking | Dashboard CPU and throttling panels used 30-second rate windows, but cAdvisor refreshes container CPU only every 10 to 20 seconds, so panels were intermittently empty. | Container-metric panels use 2-minute windows. | Fixed |
+
+### Security review
+
+No vulnerabilities were found in the commit. The reviewer noted that one of its own failed diagnostic
+queries could have written Secret data to a temporary file, and deleted those files without reading
+them.

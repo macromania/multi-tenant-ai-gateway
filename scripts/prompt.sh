@@ -55,6 +55,7 @@ section "PROMPT REQUEST | $KIND_CLUSTER | $TENANT"
 info "Upstream: $upstream ($model)"
 info "Gateway: $namespace/$GATEWAY via http://127.0.0.1:$REQUEST_PORT$path"
 if [[ "$upstream" == foundry ]]; then info 'This request uses the hosted model and can incur charges.'; fi
+load_tenant_env
 tenant_header "$TENANT"
 start_forward "$REQUEST_PORT" "$namespace" "service/$GATEWAY" 80
 http_call "http://127.0.0.1:$REQUEST_PORT$path" "$HEADER_FILE" "$payload"

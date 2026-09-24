@@ -149,8 +149,9 @@ def latency_ms(headers):
     return int(value)
 
 
-async def chat(writer, headers, body, path):
-    global in_flight
+def prepare_chat(headers, body, path):
+    """Parses a chat request into a few small values, so the body can be released before the
+    simulated latency. Returns (status, response headers, error body or None, metadata)."""
     owner = keys.get(presented_key(headers), "none")
     echo = {"x-mock-key-owner": owner}
     probe = headers.get("x-probe-id")
@@ -158,36 +159,47 @@ async def chat(writer, headers, body, path):
         echo["x-mock-probe-id"] = probe + "-corrupt" if headers.get("x-mock-corrupt-id") == "1" else probe
     if owner == "none":
         count(401, owner, path)
-        await respond(writer, 401, error_body("Invalid API key", "invalid_api_key"), echo)
-        return
+        return 401, echo, error_body("Invalid API key", "invalid_api_key"), None
     try:
         request = json.loads(body)
         if not isinstance(request, dict):
             raise ValueError
-    except ValueError:
+        limit = int(request.get("max_completion_tokens") or request.get("max_tokens") or COMPLETION_TOKENS)
+    except (ValueError, TypeError):
         count(400, owner, path)
-        await respond(writer, 400, error_body("Request body must be a JSON object", "invalid_json"), echo)
-        return
-    wait = latency_ms(headers)
-    prompt_tokens = max(1, math.ceil(prompt_characters(request.get("messages")) / 4))
-    limit = request.get("max_completion_tokens") or request.get("max_tokens") or COMPLETION_TOKENS
-    completion_tokens = max(1, min(int(limit), COMPLETION_TOKENS))
-    model = request.get("model") if isinstance(request.get("model"), str) else "mock-chat"
-    del request, body
+        return 400, echo, error_body("Request body must be a JSON object", "invalid_json"), None
+    try:
+        wait = latency_ms(headers)
+    except BadRequest as error:
+        count(400, owner, path)
+        return 400, echo, error_body(error.message, "bad_request"), None
+    metadata = {
+        "owner": owner,
+        "wait": wait,
+        "prompt_tokens": max(1, math.ceil(prompt_characters(request.get("messages")) / 4)),
+        "completion_tokens": max(1, min(limit, COMPLETION_TOKENS)),
+        "model": request.get("model") if isinstance(request.get("model"), str) else "mock-chat",
+    }
+    return 200, echo, None, metadata
+
+
+async def complete_chat(writer, echo, metadata, path):
+    global in_flight
     in_flight += 1
     try:
-        await asyncio.sleep(wait / 1000)
+        await asyncio.sleep(metadata["wait"] / 1000)
         response = {
             "id": "chatcmpl-mock-" + uuid.uuid4().hex,
             "object": "chat.completion",
             "created": int(time.time()),
-            "model": model,
+            "model": metadata["model"],
             "choices": [{"index": 0, "finish_reason": "stop",
                          "message": {"role": "assistant", "content": "This is a mock answer."}}],
-            "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
-                      "total_tokens": prompt_tokens + completion_tokens},
+            "usage": {"prompt_tokens": metadata["prompt_tokens"],
+                      "completion_tokens": metadata["completion_tokens"],
+                      "total_tokens": metadata["prompt_tokens"] + metadata["completion_tokens"]},
         }
-        count(200, owner, path)
+        count(200, metadata["owner"], path)
         await respond(writer, 200, json.dumps(response), echo)
     finally:
         in_flight -= 1
@@ -204,18 +216,25 @@ async def api(reader, writer):
             if request is None:
                 break
             method, path, headers, body = request
+            del request
+            close = headers.get("connection", "").lower() == "close"
             if path == "/healthz" and method == "GET":
+                del body
                 await respond(writer, 200, "ok", content_type="text/plain")
             elif path in CHAT_PATHS and method == "POST":
-                try:
-                    await chat(writer, headers, body, path)
-                except BadRequest as error:
-                    await respond(writer, error.status, error_body(error.message, "bad_request"))
+                status, echo, error, metadata = prepare_chat(headers, body, path)
+                del body, headers
+                if metadata is None:
+                    await respond(writer, status, error, echo)
+                else:
+                    await complete_chat(writer, echo, metadata, path)
             elif path in CHAT_PATHS:
+                del body
                 await respond(writer, 405, error_body("Use POST", "method_not_allowed"))
             else:
+                del body
                 await respond(writer, 404, error_body("Not found", "not_found"))
-            if headers.get("connection", "").lower() == "close":
+            if close:
                 break
     except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError, ValueError):
         pass
