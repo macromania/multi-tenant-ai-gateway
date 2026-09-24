@@ -37,7 +37,7 @@ Two words have fixed meanings in this plan, in the code, and in every document i
 - [x] (2026-09-24 16:40Z) Milestone 6: the ten failures with invocation checks, automatic restore, and per-tenant impact, each run in both clusters with a passing invocation check (development runs; see Surprises & Discoveries).
 - [x] (2026-09-24 16:40Z) Milestone 7: `make scale`, verified with a single step in the shared cluster and a 2,4 sweep in the dedicated cluster that returned to three tenants.
 - [x] (2026-09-24 16:40Z) Milestone 8 implementation: `make results`, docs/tenancy-comparison.md, README.md and docs/local-development.md updated, `legacy-down` removed. Development runs were deleted before committing; measured runs come from the final campaign on committed code.
-- [ ] Milestone 5 to 8 reviews (rubber-duck and security for each), fixes, and FINDINGS.md.
+- [x] (2026-09-24 17:45Z) Milestone 5 to 8 reviews: the rubber-duck reviews found 28 blocking and 5 non-blocking issues and the security reviews 2 medium issues (a restore could reactivate an offboarding tenant's key; the sweep could remove tenants it did not create), all fixed in one commit because they changed the same scripts, and verified live. Recorded in FINDINGS.md.
 - [ ] Final campaign on committed code in both clusters, `make results`, and the committed report.
 
 
@@ -206,6 +206,18 @@ These facts were found while designing the plan, before any implementation. Each
 
 - Decision (Milestones 7 and 8): the report generator (`scripts/results.sh` and `scripts/report.jq`) is left out of the input fingerprint and the committed-inputs check. The scale sweep's CPU figures use a rate window equal to each sample's own window (60 seconds idle, 120 seconds under load).
   Rationale: the generator only reads run records, so changing it must not make every measurement stale; a 2-minute idle window would include the onboarding that just finished.
+  Date/Author: 2026-09-24, Copilot.
+
+- Decision (Milestone 5 to 8 reviews): every run record, of every kind, samples the other Kind node's CPU and records a contention verdict, and every experiment adds the tenants, their limits, and the mock replicas at the start of the run to its configuration fingerprint. The report compares the latest pair of runs whose fingerprints match and accounts for every other run.
+  Rationale: the reviews showed that only failure runs recorded contention, that runs under different tenant populations or limits could share a fingerprint, and that the latest run of each cluster could hide an older matching pair.
+  Date/Author: 2026-09-24, Copilot.
+
+- Decision (Milestone 5 to 8 reviews): health means more than one successful request. The entry and recovery checks require each working-set tenant to be active, its controller and proxy ready, its limit policy fully accepted, and its proxy to enforce the expected limit (the journal's when a journal exists). Restore reapplies only tenants that were active, and experiments refuse to start while any tenant is part-way through onboarding or offboarding.
+  Rationale: a stopped controller, a partly rejected policy, or a proxy still enforcing a raised limit passed the old checks, and the old restore could reactivate an offboarding tenant's key (security review, medium).
+  Date/Author: 2026-09-24, Copilot.
+
+- Decision (Milestone 5 to 8 reviews): `make scale` manages only tenant-01 to tenant-16, refuses to start while another tenant exists, and needs `CONFIRM=1` when it would remove tenants that existed before it started. It returns an unfinished sweep to the working set from an exit hook.
+  Rationale: the sweep supplied `CONFIRM=1` to `tenant-remove` itself and could delete unrelated tenants and their keys (security review, medium).
   Date/Author: 2026-09-24, Copilot.
 
 - Decision (Milestone 7): `prom_instant` fails unless it gets exactly two arguments and Prometheus answers "success", and every query result is assigned to a variable before it is used. The scale sweep converges inside an `if` (its stop conditions are expected outcomes) but measures as a plain command, so any measurement error stops the sweep instead of recording nulls.

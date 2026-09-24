@@ -79,29 +79,36 @@ and restored afterwards.
 make calibrate CLUSTER=both
 make scenario CLUSTER=both NAME=separation
 make break CLUSTER=both FAILURE=proxy-crash
-make scale CLUSTER=both TENANTS=1,5,10
+make scale CLUSTER=both TENANTS=1,5,10 CONFIRM=1
 make results
 ```
 
 `CLUSTER=both` runs the shared cluster and then the dedicated cluster, never both at once, because
 the two Kind nodes share Docker Desktop's CPU and memory. An experiment refuses to start while the
-other cluster runs a load Job, and it samples the other node's CPU while it runs.
+other cluster runs a load Job. Every run, including each onboarding and offboarding, samples the
+other Kind node's CPU every 5 seconds and records the mean in `run.json` under `contention`.
 
 Every experiment that changes a cluster:
 
-1. Checks that no recovery journal exists and that tenant-01, tenant-02, and tenant-03 are served
-   correctly (the entry check).
-2. Writes a recovery journal (`.local/<cluster>/experiment.json`, mode 0600) with what it will
-   change.
+1. Checks that no recovery journal exists, that no tenant is part-way through onboarding or
+   offboarding, and that tenant-01, tenant-02, and tenant-03 are healthy (the entry check). Healthy
+   means: active, with a ready controller and proxy, a fully accepted limit policy, the expected limit
+   enforced by the proxy, and a verified response from the mock with the tenant's own provider key.
+2. Writes a recovery journal (`.local/<cluster>/experiment.json`, mode 0600) with every tenant's
+   limit, key hash, and state, and what the experiment will change. The experiment refuses to start
+   if this snapshot is incomplete.
 3. Starts probes for all three tenants and records 30 seconds of baseline.
 4. Triggers the change against tenant-01 or the component that serves it, and observes for 120
    seconds.
 5. Restores, unless `KEEP=1` is given, and waits until every tenant has 25 consecutive verified
    probes.
-6. Writes a run record under `results/<cluster>/` and deletes the journal only when recovery passed.
+6. Runs the same health checks again, with the journal's limits as the expected ones, writes a run
+   record under `results/<cluster>/`, and deletes the journal only when the checks passed.
 
 If a run is interrupted, or `KEEP=1` left a failure in place, `make restore CLUSTER=...` converges
-the cluster back to the journal's recorded state. It is safe to repeat.
+the cluster back to the journal's recorded state. It reapplies only tenants that were active; a
+tenant that was onboarding or offboarding is left as it is, so a restore never reactivates a key that
+offboarding had deactivated. It is safe to repeat.
 
 Every request the probes send gets one verdict:
 
@@ -118,9 +125,11 @@ Every request the probes send gets one verdict:
 
 `make calibrate` runs the latency, flood, slow, and memory profiles for 2 minutes each directly
 against the mock, without any gateway, alongside the probes. A profile is valid only when the attack
-delivered at least 95 percent of its target with no dropped iterations, the mock returned no errors,
-its p99 stayed within 20 percent of its configured latency, and its CPU was throttled in less than 10
-percent of the window. This proves that k6 and the mock can deliver each workload, so a gateway
+had verified responses for at least 95 percent of its target, with no other outcome and no dropped
+iterations; every probe response was verified and the probes delivered their planned rate; the mock
+returned no errors; its p99 stayed within 20 percent of its configured latency; its CPU was throttled
+in less than 10 percent of the window; and Prometheus had the mock's request, in-flight, and
+throttling figures (missing telemetry makes the run invalid rather than counting as zero). This proves that k6 and the mock can deliver each workload, so a gateway
 result is not limited by the apparatus.
 
 ## Scenarios
@@ -183,7 +192,19 @@ For each tenant, a failure reports, from its probe records:
   consecutive verified probes.
 
 For the tenant causing a flood, 429 responses are expected and are reported separately. Timing
-precision is 200 ms, the interval between probes.
+precision is 200 ms, the interval between probes. Only requests that started before the end of the
+run count; a request cut off when the load generator is stopped is censored.
+
+A failure run is invalid, and excluded from comparisons, when any of these holds:
+
+- its invocation check failed;
+- a probe or extra stream dropped iterations or delivered less than 99 percent of its planned rate;
+- the attack dropped iterations (proxy-memory is allowed to, because the proxy it overloads is
+  killed) or sent less than 80 percent of its planned requests;
+- any response was unverifiable, or a run with a raised limit saw a 429;
+- the mock was CPU-throttled in more than 10 percent of the observe window, its throttling telemetry
+  was missing, or a mock or k6 container was killed for memory;
+- the tenants did not recover within 5 minutes, or the health checks failed after the restore.
 
 ## Scale sweep
 
@@ -192,10 +213,20 @@ precision is 200 ms, the interval between probes.
 seconds idle and samples, then sends 1 request per second per tenant for 2 minutes and samples again.
 Each sample covers only the gateway pods (controllers and proxies): their CPU and maximum sampled
 memory, pod count, reserved requests and limits, and active gateway time series, plus the Kind node's
-memory. The sweep stops early, and records why, when a pod stays Pending for 2 minutes, the node
-reports memory pressure, or Docker Desktop has less than 2 GiB free. It always returns to the
-three-tenant working set. With a single number, for example `TENANTS=3`, it converges to that many
-tenants and records the footprint.
+memory. The load window is taken from the requests themselves. A step is valid only when every tenant
+had verified responses for 99 percent of its requests with no drops, and every figure covers exactly
+the expected gateway pods (2 in the shared cluster, 2 per tenant in the dedicated cluster).
+
+The sweep stops early, and records why, when a pod stays Pending for 2 minutes, the node reports
+memory pressure, or the Docker Desktop VM has less than 2 GiB available; it checks before each
+tenant is added, before each measurement, and during it. It returns to the three-tenant working set
+and checks its health, also after an error or Ctrl-C. With a single number, for example `TENANTS=3`,
+it converges to that many tenants and records the footprint.
+
+The sweep manages only tenant-01 to tenant-16 and refuses to start if another tenant exists. Removing
+a tenant deletes its keys, and a tenant added again gets new ones, so a command that would remove
+tenants that existed before it started needs `CONFIRM=1`. A sweep that starts from the working set
+removes tenant-02 and tenant-03 at the 1-tenant step, so it needs `CONFIRM=1`.
 
 ## Reading the results
 
@@ -204,11 +235,15 @@ all of the following are true:
 
 - the run used committed code (`inputs_committed`), and no input changed during the run;
 - the input fingerprint equals the current implementation's, so the result is not stale;
-- the run passed its own validity checks, and its failure's invocation check passed;
-- the other cluster's node averaged at most 0.5 CPU during the run (not confounded);
-- the shared and dedicated runs have the same configuration fingerprint.
+- the run passed its own validity checks (for a failure, including its invocation check and the
+  health check after the restore; for an onboarding or offboarding, a clean finish);
+- the run recorded the other cluster's load, and that node averaged at most 0.5 CPU (not confounded);
+- the shared and dedicated runs have the same configuration fingerprint, which covers the workload,
+  the windows, the tenants and their limits, and the mock replicas. When several pairs exist, the
+  latest matching pair is used.
 
-Every other run is listed at the end of the report with the reason it was excluded. Any leak appears
+Every other run is listed at the end of the report with the reason it was excluded, and so is every
+usable run that no section shows (for example one superseded by a later run). Any leak appears
 at the top. Each result links to its run directory and to the matching time range in Grafana
 (`make grafana CLUSTER=...`); those links work only while that cluster and its Prometheus data exist.
 

@@ -70,12 +70,18 @@ journal_update() {
     mv -f -- "$file" "$(journal_file)"
 }
 
+# Prints every tenant's limit, key hash, and state. Each value is read into a variable first, so a
+# failed read stops the experiment instead of producing a partial snapshot that restore would trust.
 snapshot_json() {
-    local tenant tenants=() controllers
+    local tenant listed limit hash state tenants=()
     load_tenant_env
-    for tenant in $(tenant_list); do
-        tenants+=("$(jq -nc --arg tenant "$tenant" --argjson limit "$(stored_limit "$tenant")" \
-            --arg hash "$(key_hash "$tenant")" '{tenant:$tenant, limit:$limit, key_hash:$hash}')")
+    listed=$(tenant_list)
+    for tenant in $listed; do
+        limit=$(stored_limit "$tenant")
+        hash=$(key_hash "$tenant")
+        state=$(tenant_state "$tenant")
+        tenants+=("$(jq -nc --arg tenant "$tenant" --argjson limit "$limit" --arg hash "$hash" --arg state "$state" \
+            '{tenant:$tenant, limit:$limit, key_hash:$hash, state:$state}')")
     done
     printf '%s\n' "${tenants[@]+"${tenants[@]}"}" | jq -sc '.'
 }
@@ -84,8 +90,14 @@ journal_start() {
     local kind=$1 name=$2 file
     private_state
     [[ ! -e "$(journal_file)" ]] || die "A recovery journal exists from an earlier experiment. Run make restore CLUSTER=$CLUSTER first."
+    local snapshot
+    snapshot=$(snapshot_json)
+    jq -e --arg set "$WORKING_SET" '($set | split(" ")) as $want |
+      [$want[] as $t | any(.[]; .tenant == $t and (.limit | type) == "number" and .limit > 0 and
+         (.key_hash | test("^sha256:[0-9a-f]{64}$")) and .state == "active")] | all' <<<"$snapshot" >/dev/null ||
+        die "The snapshot of the working set is incomplete; nothing was changed."
     new_temp; file=$TEMP_FILE
-    jq -n --arg kind "$kind" --arg name "$name" --arg run "$RUN_ID" --argjson tenants "$(snapshot_json)" \
+    jq -n --arg kind "$kind" --arg name "$name" --arg run "$RUN_ID" --argjson tenants "$snapshot" \
         '{run_id:$run, kind:$kind, name:$name, stage:"started", tenants:$tenants, notes:{}}' >"$file"
     chmod 600 "$file"
     mv -f -- "$file" "$(journal_file)"
@@ -93,31 +105,43 @@ journal_start() {
 
 journal_stage() { journal_update --arg stage "$1" '.stage = $stage'; }
 
-# Reapplies every tenant's configuration from the journal (or the cluster, without one) and the
-# stored keys: limits, key hashes, active keys, provider Secrets, backends, routes, and policies.
-# Every step is safe to repeat. Inside an experiment, that experiment's own probe Job is kept,
-# because it measures the recovery.
+# Reapplies every active tenant's configuration from the journal (or the cluster, without one) and
+# the stored keys: limits, key hashes, active keys, provider Secrets, backends, routes, and policies.
+# A tenant that was onboarding or offboarding is left as it is, so a restore never reactivates a key
+# that offboarding had deactivated. With a journal, its limits are used and never the cluster's
+# current ones, which an experiment may have changed. Every step is safe to repeat. Inside an
+# experiment, that experiment's own probe Job is kept, because it measures the recovery.
 restore_cluster() {
-    local journal tenant limit namespace selector=gateway.dev/run
+    local journal tenant limit state namespace listed selector=gateway.dev/run
     journal=$(journal_file)
     load_tenant_env
     [[ -z "${RUN_ID:-}" ]] || selector="gateway.dev/run,gateway.dev/run!=$RUN_ID"
     kube -n "$LOAD_NAMESPACE" delete jobs,configmaps,secrets -l "$selector" --ignore-not-found --wait=false >/dev/null
     if [[ "$CLUSTER" == shared ]]; then
         kube -n "$NAMESPACE" scale deployment agentgateway --replicas=1 >/dev/null
-    else
-        for tenant in $(tenant_list); do
-            kube -n "$tenant" scale deployment "agw-$tenant-agentgateway" --replicas=1 >/dev/null
-        done
     fi
     mock_push_keys
-    for tenant in $(tenant_list); do
-        limit=
+    listed=$(tenant_list)
+    for tenant in $listed; do
         if [[ -e "$journal" ]]; then
+            state=$(jq -r --arg tenant "$tenant" '.tenants[] | select(.tenant == $tenant) | .state // "active"' "$journal")
             limit=$(jq -r --arg tenant "$tenant" '.tenants[] | select(.tenant == $tenant) | .limit' "$journal")
+            if [[ -z "$state" ]]; then
+                warn "$tenant is not in the recovery journal; it is left as it is."
+                continue
+            fi
+            [[ "$state" != active || "$limit" =~ ^[0-9]+$ ]] || die "The journal holds no limit for $tenant; the journal is kept."
+        else
+            state=$(tenant_state "$tenant")
+            limit=
+            [[ "$state" != active ]] || limit=$(stored_limit "$tenant")
         fi
-        [[ -n "$limit" ]] || limit=$(stored_limit "$tenant")
+        if [[ "$state" != active ]]; then
+            warn "$tenant is ${state:-without a state}, so it is left as it is. Finish it with make tenant-add or make tenant-remove CONFIRM=1."
+            continue
+        fi
         namespace=$(tenant_namespace "$tenant")
+        [[ "$CLUSTER" == shared ]] || kube -n "$tenant" scale deployment "agw-$tenant-agentgateway" --replicas=1 >/dev/null
         if [[ "$CLUSTER" == shared ]]; then
             apply_tenant_objects "$tenant" "$NAMESPACE" "$limit" "$tenant-key" "mock-provider-$tenant" "mock-$tenant" active
         else
@@ -144,21 +168,54 @@ render_namespace_template() {
     kube_apply -f "$file" >/dev/null
 }
 
-# Every working-set tenant exists with an active key, its gateway is ready, and a request with its
-# key is served by the mock with its own provider key. Retries until the deadline.
+# Prints the first reason the working set is not healthy, or nothing. Healthy means: every tenant
+# exists and is active; its controller and proxy are ready; its limit policy is fully accepted; its
+# proxy enforces the expected limit (the journal's, when a journal exists); and a request with its
+# key is served by the mock with its own provider key.
+recovery_problem() {
+    local journal=$1 tenant state namespace ready controller policy expected enforced
+    for tenant in $WORKING_SET; do
+        tenant_exists "$tenant" || { printf '%s is missing' "$tenant"; return 0; }
+        state=$(tenant_state "$tenant")
+        [[ "$state" == active ]] || { printf '%s is %s, not active' "$tenant" "${state:-without a state}"; return 0; }
+    done
+    for tenant in $WORKING_SET; do
+        namespace=$(tenant_namespace "$tenant")
+        if [[ "$CLUSTER" == shared ]]; then controller=agentgateway; else controller="agw-$tenant-agentgateway"; fi
+        for ready in "$controller" "$GATEWAY"; do
+            state=$(kube -n "$namespace" get deployment "$ready" -o jsonpath='{.status.readyReplicas}')
+            [[ "${state:-0}" -ge 1 ]] || { printf 'deployment %s/%s is not ready' "$namespace" "$ready"; return 0; }
+        done
+        policy=$(kube -n "$namespace" get agentgatewaypolicy tenant-limits -o json)
+        jq -e '[.status.ancestors[]?.conditions[]? | select(.type == "Accepted")] |
+               length > 0 and all(.status == "True" and .reason != "PartiallyValid")' <<<"$policy" >/dev/null ||
+            { printf 'policy %s/tenant-limits is not fully accepted' "$namespace"; return 0; }
+        if [[ -e "$journal" ]]; then
+            expected=$(jq -r --arg tenant "$tenant" '.tenants[] | select(.tenant == $tenant) | .limit' "$journal")
+        else
+            expected=$(stored_limit "$tenant")
+        fi
+        enforced=$(enforced_limit "$tenant")
+        [[ "$enforced" == "$expected" ]] ||
+            { printf '%s is enforced at %s tokens per minute, expected %s' "$tenant" "${enforced:-no limit}" "$expected"; return 0; }
+    done
+    for tenant in $WORKING_SET; do
+        node_request "$tenant" "$(tenant_namespace "$tenant")" /mock/v1/chat/completions
+        if [[ "$REQ_STATUS" != 200 || "$REQ_OWNER" != "$tenant" || "$REQ_ECHO_OK" != true ]]; then
+            printf '%s got %s (key owner %s)' "$tenant" "${REQ_STATUS:-no response}" "${REQ_OWNER:-none}"; return 0
+        fi
+    done
+}
+
+# Retries recovery_problem until it finds nothing or the deadline passes. A failure to read the
+# cluster counts as a problem, never as health.
 recovery_checks() {
-    local seconds=${1:-$RECOVERY_SECONDS} deadline tenant failed
+    local seconds=${1:-$RECOVERY_SECONDS} deadline failed journal
     load_tenant_env
+    journal=$(journal_file)
     deadline=$(( $(date +%s) + seconds ))
     while :; do
-        failed=
-        for tenant in $WORKING_SET; do
-            if ! tenant_exists "$tenant"; then failed="$tenant is missing"; break; fi
-            node_request "$tenant" "$(tenant_namespace "$tenant")" /mock/v1/chat/completions
-            if [[ "$REQ_STATUS" != 200 || "$REQ_OWNER" != "$tenant" || "$REQ_ECHO_OK" != true ]]; then
-                failed="$tenant got ${REQ_STATUS:-no response} (key owner ${REQ_OWNER:-none})"; break
-            fi
-        done
+        failed=$(recovery_problem "$journal") || failed='the cluster state could not be read'
         [[ -n "$failed" ]] || return 0
         [[ "$(date +%s)" -lt "$deadline" ]] || { warn "Recovery check failed: $failed"; return 1; }
         sleep 2
@@ -166,10 +223,18 @@ recovery_checks() {
 }
 
 entry_check() {
-    local tenant
+    local tenant listed state
     [[ ! -e "$(journal_file)" ]] || die "A recovery journal exists from an earlier experiment. Run make restore CLUSTER=$CLUSTER first."
     for tenant in $WORKING_SET; do
         tenant_exists "$tenant" || die "The working set needs $WORKING_SET. Run make scale CLUSTER=$CLUSTER TENANTS=3."
+    done
+    # An unfinished onboarding or offboarding anywhere would be changed by the restore, so it must be
+    # finished first.
+    listed=$(tenant_list)
+    for tenant in $listed; do
+        state=$(tenant_state "$tenant")
+        [[ "$state" == active ]] ||
+            die "$tenant is ${state:-without a state}. Finish it with make tenant-add or make tenant-remove CONFIRM=1 first."
     done
     # 120 seconds covers a token budget that an earlier load spent; local limits refill each minute.
     recovery_checks 120 || die "The cluster is not healthy; nothing was changed. Run make restore CLUSTER=$CLUSTER."
@@ -216,26 +281,6 @@ prom_instant() {
     printf '%s' "$result"
 }
 
-# The other Kind node's CPU while this cluster is measured; it shares the same Docker Desktop VM.
-OTHER_SAMPLER=
-OTHER_FILE=
-stop_other_sampler() { if [[ -n "$OTHER_SAMPLER" ]]; then kill "$OTHER_SAMPLER" 2>/dev/null || true; fi; }
-start_other_sampler() {
-    local other
-    if [[ "$CLUSTER" == shared ]]; then other=mtag-dedicated-control-plane; else other=mtag-shared-control-plane; fi
-    new_temp; OTHER_FILE=$TEMP_FILE
-    on_exit stop_other_sampler
-    (
-        set +e
-        while :; do
-            docker --context desktop-linux stats --no-stream --format '{{.CPUPerc}}' "$other" 2>/dev/null |
-                tr -d '%' >>"$OTHER_FILE"
-            sleep 5
-        done
-    ) &
-    OTHER_SAMPLER=$!
-}
-
 other_cluster_busy() {
     local other_config=$STATE/dedicated/kubeconfig other_context=kind-mtag-dedicated jobs
     if [[ "$CLUSTER" == dedicated ]]; then other_config=$STATE/shared/kubeconfig; other_context=kind-mtag-shared; fi
@@ -265,6 +310,8 @@ def impact($m; $cause):
     [$r[] | select(.start_ms >= $m.trigger_start)] as $after |
     ([$after[] | select(failed($cause))] | length) as $after_failed |
     [$after[] | select($base_p95 != null and .verdict == "verified" and .duration_ms > 5 * $base_p95)] as $slow |
+    ((($observe | length) > 0 and ([$observe[] | select(failed($cause))] | length) / ($observe | length) > 0.01) or
+     ($base_p95 != null and $observe_p95 != null and $observe_p95 > 2 * $base_p95)) as $material |
     (reduce range(0; $after | length) as $i ({episodes: [], open: null};
        if ($after[$i] | failed($cause)) then (if .open == null then .open = $after[$i].start_ms else . end)
        elif .open != null then .episodes += [{start_ms: (.open - $m.trigger_start), duration_ms: ($after[$i].start_ms - .open)}] | .open = null
@@ -281,13 +328,12 @@ def impact($m; $cause):
                expected_429: ([$observe[] | select($cause != null and .tenant == $cause and .status == 429)] | length)},
      recover: {requests: ($recover | length), failed: ([$recover[] | select(failed($cause))] | length)},
      statuses: ([$after[] | select(failed($cause)) | (.status | tostring)] | group_by(.) | map({(.[0]): length}) | add // {}),
-     leaks: ([$all[] | select(.verdict == "leak")] | length),
-     unverifiable: ([$all[] | select(.verdict == "unverifiable")] | length),
+     leaks: ([$r[] | select(.verdict == "leak")] | length),
+     unverifiable: ([$r[] | select(.verdict == "unverifiable")] | length),
      slow: {count: ($slow | length), threshold_ms: (if $base_p95 == null then null else 5 * $base_p95 end),
             max_ms: ([$slow[].duration_ms] | max)},
-     any_impact: ($after_failed > 0 or ($slow | length) > 0),
-     material_impact: ((($observe | length) > 0 and ([$observe[] | select(failed($cause))] | length) / ($observe | length) > 0.01) or
-                       ($base_p95 != null and $observe_p95 != null and $observe_p95 > 2 * $base_p95)),
+     any_impact: ($after_failed > 0 or ($slow | length) > 0 or $material),
+     material_impact: $material,
      episodes: $episodes, failed_time_ms: ([$episodes[].duration_ms] | add // 0),
      recovery_after_trigger_ms: (if $last_failure == null then null else ((healthy_after($last_failure)) as $h | if $h == null then null else $h - $m.trigger_start end) end),
      recovery_after_restore_ms: (if $last_failure == null or $m.restore_start == null then null
@@ -296,33 +342,44 @@ def impact($m; $cause):
 # ---------------------------------------------------------------------------------------------
 # Validity: the apparatus must have delivered the workload, or a design can look better than it is.
 # ---------------------------------------------------------------------------------------------
-# validity_json <run dir> <attack target rate or 0> <raised limit true|false>: prints {valid, reasons}
+# validity_json <run dir> <attack rate or 0> <raised limit true|false> <attack seconds> <end ms>
+# <drops allowed true|false>: prints {valid, reasons, other_node_cpu, confounded}. Every stream that
+# writes records (probes and the extra streams a failure adds) must have delivered its planned rate
+# without drops up to the end mark; the attack must have sent at least 80 percent of its plan without
+# drops (unless the failure allows drops); no response may be unverifiable; and a raised-limit run
+# may see no 429 in any stream.
 validity_json() {
-    local dir=$1 attack_rate=$2 raised=$3 other_cpu=0
-    if [[ -n "$OTHER_FILE" && -s "$OTHER_FILE" ]]; then
-        other_cpu=$(awk '{ if ($1 ~ /^[0-9.]+$/) { s += $1; n++ } } END { if (n) printf "%.2f", s / n / 100; else print 0 }' "$OTHER_FILE")
-    fi
-    jq -n --slurpfile probe "$dir/k6-summary-probe.json" --slurpfile records <(cat "$dir"/probes-*.jsonl 2>/dev/null) \
-        --arg attack_file "$dir/k6-summary-attack.json" --argjson attack_rate "$attack_rate" --arg raised "$raised" \
-        --argjson other "$other_cpu" --slurpfile attack <(cat "$dir/k6-summary-attack.json" 2>/dev/null || printf '{}') \
+    local dir=$1 attack_rate=$2 raised=$3 attack_seconds=$4 end_ms=$5 drops_allowed=${6:-false} contention
+    contention=$(contention_json)
+    jq -n --slurpfile probe "$dir/k6-summary-probe.json" --slurpfile records <(cat "$dir"/probes-probe.jsonl 2>/dev/null) \
+        --argjson attack_rate "$attack_rate" --argjson attack_seconds "$attack_seconds" --arg raised "$raised" \
+        --argjson end "$end_ms" --arg drops_allowed "$drops_allowed" --argjson contention "$contention" \
+        --slurpfile attack <(cat "$dir/k6-summary-attack.json" 2>/dev/null || printf '{}') \
         --slurpfile extra <(cat "$dir/validity-extra.json" 2>/dev/null || printf '[]') '
-      ($probe[0].streams | to_entries | map(select(.value.role == "probe"))) as $probes |
+      ($probe[0].streams | to_entries | map(select(.value.recorded))) as $recorded |
+      ($attack[0].streams // {} | to_entries | map(select(.value.role == "attack"))) as $a |
+      [$records[] | select(.start_ms < $end)] as $r |
       [
-        (if any($probes[]; .value.dropped_iterations > 0) then "probe iterations were dropped" else empty end),
-        ($records | map(select(.stream | startswith("probe-"))) | group_by(.stream) |
-         map(select(length > 1 and length < 0.99 * $probe[0].streams[.[0].stream].target_rate *
+        ($recorded | map(select(.value.dropped_iterations > 0) | .key) |
+         if length > 0 then "iterations were dropped by " + join(", ") else empty end),
+        ($r | group_by(.stream) | map(select(length > 1 and length < 0.99 * $probe[0].streams[.[0].stream].target_rate *
              ((map(.start_ms) | max) - (map(.start_ms) | min)) / 1000 - 5)) | map(.[0].stream) |
-         if length > 0 then "probes delivered fewer than 99 percent of their planned requests: " + join(", ") else empty end),
-        (if any($records[]; .verdict == "unverifiable") then "a response was unverifiable" else empty end),
-        (if $raised == "true" and any($records[]; .status == 429) then "a raised-limit run saw 429" else empty end),
+         if length > 0 then "streams delivered fewer than 99 percent of their planned requests: " + join(", ") else empty end),
+        (([$r[] | select(.verdict == "unverifiable")] | length) + ($a | map(.value.verdicts.unverifiable) | add // 0) |
+         if . > 0 then "\(.) responses were unverifiable" else empty end),
+        (if $raised == "true" then
+           (([$r[] | select(.status == 429)] | length) + ($a | map(.value.statuses["429"] // 0) | add // 0) |
+            if . > 0 then "a raised-limit run saw \(.) responses with 429" else empty end)
+         else empty end),
         (if $attack_rate > 0 then
-           ($attack[0].streams // {} | to_entries | map(select(.value.role == "attack"))) as $a |
            if ($a | length) == 0 then "the attack produced no summary"
-           elif any($a[]; .value.dropped_iterations > 0.2 * .value.iterations) then "the attack dropped more than 20 percent of its iterations"
-           else empty end
+           else $a[].value |
+             (if $drops_allowed != "true" and .dropped_iterations > 0 then "the attack dropped \(.dropped_iterations) iterations" else empty end),
+             (if .requests < 0.8 * $attack_rate * $attack_seconds then "the attack sent \(.requests) of \($attack_rate * $attack_seconds) planned requests" else empty end)
+           end
          else empty end)
       ] + $extra[0] as $reasons |
-      {valid: ($reasons | length == 0), reasons: $reasons, other_node_cpu: $other, confounded: ($other > 0.5)}'
+      {valid: ($reasons | length == 0), reasons: $reasons, other_node_cpu: $contention.mean_cpu, confounded: $contention.confounded}'
 }
 
 grafana_links() {
@@ -343,13 +400,29 @@ save_events() {
 # ---------------------------------------------------------------------------------------------
 # Scenarios
 # ---------------------------------------------------------------------------------------------
+# The tenants, their limits, and the mock's replicas when a run starts. finish_run adds them to the
+# record's config, so runs made under different conditions never share a configuration fingerprint.
+apparatus_json() {
+    local listed tenant limit replicas entries=()
+    listed=$(tenant_list)
+    for tenant in $listed; do
+        limit=$(stored_limit "$tenant")
+        entries+=("$(jq -nc --arg tenant "$tenant" --argjson limit "$limit" '{($tenant): $limit}')")
+    done
+    replicas=$(kube -n "$MOCK_NAMESPACE" get deployment mock -o jsonpath='{.spec.replicas}')
+    [[ "$replicas" =~ ^[0-9]+$ ]] || die "Cannot read the mock's replica count."
+    printf '%s\n' "${entries[@]+"${entries[@]}"}" |
+        jq -sc --argjson replicas "$replicas" '{tenant_count: length, limits: (add // {}), mock_replicas: $replicas}'
+}
+
+APPARATUS=
 begin_run() {
     local kind=$1 name=$2
     other_cluster_busy && die "The other cluster is running a load Job; measure one cluster at a time."
+    APPARATUS=$(apparatus_json)
     new_run "$kind" "$name"
     SAY_FILE="$RUN_DIR/summary.txt"
     : >"$SAY_FILE"
-    start_other_sampler
 }
 
 restore_on_exit() {
@@ -364,10 +437,11 @@ restore_on_exit() {
 }
 
 finish_run() {
-    local fields=$1
+    local fields=$1 merged
     SAY_FILE=
-    write_run_json "$fields"
-    stop_other_sampler
+    new_temp; merged=$TEMP_FILE
+    jq --argjson apparatus "${APPARATUS:-null}" 'if has("config") then .config.apparatus = $apparatus else . end' "$fields" >"$merged"
+    write_run_json "$merged"
 }
 
 check_row() {
@@ -471,11 +545,14 @@ scenario_separation() {
     new_temp; checks_file=$TEMP_FILE
     printf '%s\n' "${CHECKS[@]}" | jq -sc '.' >"$checks_file"
     new_temp; fields=$TEMP_FILE
+    local links leaks
+    links=$(grafana_links "$started" "$ended")
+    leaks=$(jq '[.[] | select((.stream | startswith("probe-")) and .verdict == "leak")] | length' <<<"$records")
     jq -n --arg run "$RUN_ID" --argjson started "$started" --argjson ended "$ended" --slurpfile checks "$checks_file" \
-        --argjson links "$(grafana_links "$started" "$ended")" --argjson tenants "$(printf '%s' "$WORKING_SET" | wc -w | tr -d ' ')" '{
+        --argjson links "$links" --argjson leaks "$leaks" --argjson tenants "$(printf '%s' "$WORKING_SET" | wc -w | tr -d ' ')" '{
       kind:"scenario", name:"separation", run_id:$run, clock:"kind-node", started_ms:$started, ended_ms:$ended,
       config:{scenario:"separation", working_set:$tenants, probe_rate:5, design:env.CLUSTER},
-      checks:$checks[0], passed:($checks[0] | all(.passed)), grafana:$links}' >"$fields"
+      checks:$checks[0], passed:($checks[0] | all(.passed)), leaks:$leaks, grafana:$links}' >"$fields"
     finish_run "$fields"
     say_row 'Run record' "${RUN_DIR#$ROOT/}"
     jq -e '.passed' "$RUN_DIR/run.json" >/dev/null || die "At least one separation check failed."
@@ -491,8 +568,15 @@ latency_measure() {
         '{streams:[$warm, $measure]}' >"$plan"
     run="$RUN_ID-$label"
     run_load "$(printf '%s' "$run" | cut -c1-36 | sed 's/-*$//')" attack "$plan" "$out" >/dev/null
-    jq -s -c '[.[] | select(.stream == "measure" and .verdict == "verified") | .duration_ms] | sort |
-      {requests: length, p50: .[(length - 1) * 0.5 | floor], p95: .[(length - 1) * 0.95 | floor], p99: .[(length - 1) * 0.99 | floor]}' \
+    # Percentiles come from verified responses only, so every other outcome makes the pair invalid.
+    jq -s -c --slurpfile summary "$out/k6-summary-attack.json" '
+      [.[] | select(.stream == "measure")] as $m |
+      ([$m[] | select(.verdict == "verified") | .duration_ms] | sort) as $d |
+      {requests: ($d | length), p50: $d[(($d | length) - 1) * 0.5 | floor], p95: $d[(($d | length) - 1) * 0.95 | floor],
+       p99: $d[(($d | length) - 1) * 0.99 | floor],
+       not_verified: ([$m[] | select(.verdict != "verified" and .verdict != "censored")] | length),
+       dropped: ([$summary[0].streams[].dropped_iterations] | add // 0),
+       refused_429: ([$summary[0].streams[].statuses["429"] // 0] | add // 0)}' \
         "$out/probes-attack.jsonl"
 }
 
@@ -536,14 +620,19 @@ scenario_latency() {
        difference_ms:{p50:{median:([$pairs[0][].difference_ms.p50] | median), min:([$pairs[0][].difference_ms.p50] | min), max:([$pairs[0][].difference_ms.p50] | max)},
                       p95:{median:([$pairs[0][].difference_ms.p95] | median), min:([$pairs[0][].difference_ms.p95] | min), max:([$pairs[0][].difference_ms.p95] | max)},
                       p99:{median:([$pairs[0][].difference_ms.p99] | median), min:([$pairs[0][].difference_ms.p99] | min), max:([$pairs[0][].difference_ms.p99] | max)}},
-       valid:([$pairs[0][] | .direct.requests, .gateway.requests] | all(. >= 5900)),
-       grafana:$links}' >"$fields"
+       grafana:$links} |
+      .reasons = ([$pairs[0][] | .pair as $p | (.direct | . + {target:"direct"}), (.gateway | . + {target:"gateway"}) |
+        (if .requests < 5900 then "pair \($p) \(.target): \(.requests) verified responses of 6000" else empty end),
+        (if .not_verified > 0 then "pair \($p) \(.target): \(.not_verified) responses were not verified" else empty end),
+        (if .dropped > 0 then "pair \($p) \(.target): \(.dropped) iterations dropped" else empty end),
+        (if .refused_429 > 0 then "pair \($p) \(.target): \(.refused_429) responses with 429" else empty end)]) |
+      .valid = (.reasons | length == 0)' >"$fields"
     finish_run "$fields"
     say_row 'Gateway minus direct, p50' "$(jq -r '.difference_ms.p50 | "median \(.median) ms (range \(.min) to \(.max))"' "$RUN_DIR/run.json")"
     say_row 'Gateway minus direct, p95' "$(jq -r '.difference_ms.p95 | "median \(.median) ms (range \(.min) to \(.max))"' "$RUN_DIR/run.json")"
     say_row 'Gateway minus direct, p99' "$(jq -r '.difference_ms.p99 | "median \(.median) ms (range \(.min) to \(.max))"' "$RUN_DIR/run.json")"
     say_row 'Run record' "${RUN_DIR#$ROOT/}"
-    jq -e '.valid' "$RUN_DIR/run.json" >/dev/null || die "A latency measurement delivered fewer requests than planned."
+    jq -e '.valid' "$RUN_DIR/run.json" >/dev/null || die "The latency run is invalid: $(jq -r '.reasons | join("; ")' "$RUN_DIR/run.json")."
     ok 'Latency differences recorded'
 }
 
@@ -634,14 +723,17 @@ calibrate_profile() {
     ended=$(node_now_ms)
     load_finish "$RUN_ID" probe "$RUN_DIR" >/dev/null
     prom_open
-    local throttled in_flight mock_errors
-    throttled=$(prom_instant "max(sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"mock-upstream\",container=\"mock\"}[2m])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=\"mock-upstream\",container=\"mock\"}[2m])))" "$(( ended / 1000 ))" |
-        jq '[.data.result[].value[1] | tonumber] | max // 0')
-    in_flight=$(prom_instant "max_over_time(sum(mock_in_flight)[$(( (ended - started) / 1000 ))s:5s])" "$(( ended / 1000 ))" |
-        jq '[.data.result[].value[1] | tonumber] | max // 0')
-    mock_errors=$(prom_instant "sum(increase(mock_requests_total{code!=\"200\"}[$(( (ended - started) / 1000 + 10 ))s]))" "$(( ended / 1000 + 5 ))" |
-        jq '[.data.result[].value[1] | tonumber] | add // 0')
+    # Each answer is kept whole, so missing telemetry is reported instead of being read as zero.
+    local throttled_raw in_flight_raw errors_raw total_raw throttled in_flight mock_errors mock_total
+    throttled_raw=$(prom_instant "max(sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"mock-upstream\",container=\"mock\"}[2m])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=\"mock-upstream\",container=\"mock\"}[2m])))" "$(( ended / 1000 ))")
+    in_flight_raw=$(prom_instant "max_over_time(sum(mock_in_flight)[$(( (ended - started) / 1000 ))s:5s])" "$(( ended / 1000 ))")
+    errors_raw=$(prom_instant "sum(increase(mock_requests_total{code!=\"200\"}[$(( (ended - started) / 1000 + 10 ))s]))" "$(( ended / 1000 + 5 ))")
+    total_raw=$(prom_instant "sum(increase(mock_requests_total[$(( (ended - started) / 1000 + 10 ))s]))" "$(( ended / 1000 + 5 ))")
     prom_close
+    throttled=$(jq '[.data.result[].value[1] | tonumber? // empty] | max' <<<"$throttled_raw")
+    in_flight=$(jq '[.data.result[].value[1] | tonumber? // empty] | max' <<<"$in_flight_raw")
+    mock_errors=$(jq '[.data.result[].value[1] | tonumber? // empty] | add // 0' <<<"$errors_raw")
+    mock_total=$(jq '[.data.result[].value[1] | tonumber? // empty] | add' <<<"$total_raw")
     cp -- "$PROM_LOG" "$RUN_DIR/prometheus.json"
     rate=$(profile_json "$profile" | jq '.rate')
     latency=$(profile_json "$profile" | jq '.latency_ms // 100')
@@ -649,26 +741,34 @@ calibrate_profile() {
     jq -n --arg run "$RUN_ID" --arg profile "$profile" --argjson started "$started" --argjson ended "$ended" \
         --argjson profile_json "$(profile_json "$profile")" --argjson rate "$rate" --argjson latency "$latency" \
         --argjson throttled "$throttled" --argjson in_flight "$in_flight" --argjson mock_errors "$mock_errors" \
+        --argjson mock_total "$mock_total" --slurpfile records "$RUN_DIR/probes-probe.jsonl" \
         --slurpfile attack "$RUN_DIR/k6-summary-attack.json" --slurpfile probe "$RUN_DIR/k6-summary-probe.json" \
         --argjson replicas "$(kube -n "$MOCK_NAMESPACE" get deployment mock -o jsonpath='{.spec.replicas}')" \
         --argjson links "$(grafana_links "$started" "$ended")" '
       ($attack[0].streams | to_entries[0].value) as $a |
       ($probe[0].streams | to_entries | map(.value)) as $p |
+      [$records[] | select(.verdict != "censored")] as $r |
       [
-        (if $a.requests < 0.95 * $rate * 120 then "attack delivered \($a.requests) of \($rate * 120) requests" else empty end),
+        (if $a.verdicts.verified < 0.95 * $rate * 120 then "attack had \($a.verdicts.verified) verified responses of \($rate * 120) planned" else empty end),
+        (($a.verdicts | .leak + .blocked + .unverifiable + .failed) | if . > 0 then "attack had \(.) responses that were not verified" else empty end),
         (if $a.dropped_iterations > 0 then "attack dropped \($a.dropped_iterations) iterations" else empty end),
+        (if $mock_total == null or $mock_total == 0 then "no mock request telemetry" else empty end),
         (if $mock_errors > 0 then "the mock returned \($mock_errors) errors" else empty end),
         (if $a.duration_ms["p(99)"] > 1.2 * $latency then "attack p99 \($a.duration_ms["p(99)"] | floor) ms exceeds 120 percent of \($latency) ms" else empty end),
-        (if $throttled > 0.1 then "mock CPU throttled \($throttled * 100 | floor) percent" else empty end),
-        (if any($p[]; .dropped_iterations > 0) then "probe iterations were dropped" else empty end)
+        (if $throttled == null then "no mock CPU throttling telemetry" elif $throttled > 0.1 then "mock CPU throttled \($throttled * 100 | floor) percent" else empty end),
+        (if $in_flight == null then "no mock in-flight telemetry" else empty end),
+        (if any($p[]; .dropped_iterations > 0) then "probe iterations were dropped" else empty end),
+        ([$r[] | select(.verdict != "verified")] | length | if . > 0 then "\(.) probe responses were not verified" else empty end),
+        ($r | group_by(.stream) | map(select(length < 0.99 * 5 * ((map(.start_ms) | max) - (map(.start_ms) | min)) / 1000 - 5)) |
+         map(.[0].stream) | if length > 0 then "probes delivered fewer than 99 percent of their planned requests: " + join(", ") else empty end)
       ] as $reasons |
       {kind:"calibration", name:$profile, run_id:$run, clock:"kind-node", started_ms:$started, ended_ms:$ended,
        config:{profile:$profile_json, target:"mock", duration_s:120, mock_replicas:$replicas, design:env.CLUSTER},
-       attack:$a, probes:$p, mock:{max_throttled_ratio:$throttled, max_in_flight:$in_flight, errors:$mock_errors},
+       attack:$a, probes:$p, mock:{max_throttled_ratio:$throttled, max_in_flight:$in_flight, errors:$mock_errors, requests:$mock_total},
        valid:($reasons | length == 0), reasons:$reasons, grafana:$links}' >"$fields"
     finish_run "$fields"
     say_row 'Attack delivered' "$(jq -r '.attack | "\(.requests) requests, \(.dropped_iterations) dropped, p99 \(.duration_ms["p(99)"] | floor) ms"' "$RUN_DIR/run.json")"
-    say_row 'Mock' "$(jq -r '.mock | "max \(.max_in_flight) in flight, throttled \(.max_throttled_ratio * 100 | floor)%, \(.errors) errors"' "$RUN_DIR/run.json")"
+    say_row 'Mock' "$(jq -r '.mock | "max \(.max_in_flight // "unknown") in flight, throttled \(if .max_throttled_ratio == null then "unknown" else "\(.max_throttled_ratio * 100 | floor)%" end), \(.errors) errors"' "$RUN_DIR/run.json")"
     say_row 'Verdict' "$(jq -r 'if .valid then "valid" else "invalid: " + (.reasons | join("; ")) end' "$RUN_DIR/run.json")"
     say_row 'Run record' "${RUN_DIR#$ROOT/}"
     jq -e '.valid' "$RUN_DIR/run.json" >/dev/null
@@ -703,9 +803,11 @@ load_command() {
     say_section "LOAD | $KIND_CLUSTER | $TENANT | $profile"
     new_temp; plan_attack=$TEMP_FILE
     jq -n --argjson attack "$(stream_json "attack" "$TENANT" "$profile" "$target" "$duration" "$extra")" '{streams:[$attack]}' >"$plan_attack"
+    # Probes outlive the attack (and its slowest request), and are stopped once it has finished.
+    local probe_seconds started ended
+    if [[ "$duration" == *m ]]; then probe_seconds=$(( ${duration%m} * 60 + 75 )); else probe_seconds=$(( ${duration%s} + 75 )); fi
     new_temp; plan_probe=$TEMP_FILE
-    jq -n --argjson probes "$(probe_streams "$duration")" '{streams:$probes}' >"$plan_probe"
-    local started ended
+    jq -n --argjson probes "$(probe_streams "${probe_seconds}s")" '{streams:$probes}' >"$plan_probe"
     load_start "$RUN_ID" probe "$plan_probe"
     load_first_record "$RUN_ID" probe
     started=$(node_now_ms)
@@ -716,9 +818,11 @@ load_command() {
     new_temp; fields=$TEMP_FILE
     jq -n --arg run "$RUN_ID" --argjson started "$started" --argjson ended "$ended" --arg tenant "$TENANT" \
         --slurpfile attack "$RUN_DIR/k6-summary-attack.json" --slurpfile probe "$RUN_DIR/k6-summary-probe.json" \
-        --argjson links "$(grafana_links "$started" "$ended")" '{
+        --arg profile "$profile" --arg duration "$duration" --arg target "$target" --argjson stream "$extra" \
+        --argjson profile_json "$(profile_json "$profile")" --argjson links "$(grafana_links "$started" "$ended")" '{
       kind:"load", name:$tenant, run_id:$run, clock:"kind-node", started_ms:$started, ended_ms:$ended,
-      config:{design:env.CLUSTER, tenant:$tenant, profile:env.PROFILE, duration:env.DURATION},
+      config:{design:env.CLUSTER, tenant:$tenant, profile:$profile, profile_values:$profile_json, duration:$duration,
+              upstream:$target, rate:($stream.rate // $profile_json.rate)},
       attack:$attack[0].streams, probes:$probe[0].streams, grafana:$links}' >"$fields"
     finish_run "$fields"
     jq -r '.attack, .probes | to_entries[] | "\(.key)\t\(.value.requests) requests, \(.value.dropped_iterations) dropped, \(.value.verdicts | to_entries | map("\(.key) \(.value)") | join(", "))"' \

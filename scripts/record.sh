@@ -11,6 +11,9 @@ INPUT_PATHS=(Makefile scripts deploy versions.env ports.env ':(exclude)scripts/r
 RUN_ID=
 RUN_DIR=
 RUN_PROVENANCE=
+CONTENTION_FILE=
+CONTENTION_SAMPLER=
+CONTENTION_LIMIT=0.5
 
 # SHA-256 over the path and content hash of every tracked or untracked, non-ignored input file.
 input_fingerprint() {
@@ -49,6 +52,47 @@ new_run() {
     # Provenance describes the code at the start of the run; write_run_json checks it again.
     new_temp; RUN_PROVENANCE=$TEMP_FILE
     provenance_json >"$RUN_PROVENANCE"
+    start_contention_sampler
+}
+
+# The other project cluster's Kind node shares Docker Desktop's CPU. Every run samples its CPU every
+# 5 seconds, and write_run_json records the mean, so the report can exclude confounded runs.
+other_node_name() {
+    if [[ "$CLUSTER" == shared ]]; then printf 'mtag-dedicated-control-plane'; else printf 'mtag-shared-control-plane'; fi
+}
+stop_contention_sampler() {
+    if [[ -n "$CONTENTION_SAMPLER" ]]; then
+        kill "$CONTENTION_SAMPLER" 2>/dev/null || true
+        wait "$CONTENTION_SAMPLER" 2>/dev/null || true
+    fi
+    CONTENTION_SAMPLER=
+}
+start_contention_sampler() {
+    local other
+    stop_contention_sampler
+    other=$(other_node_name)
+    CONTENTION_FILE="$RUN_DIR/other-node-cpu.txt"
+    : >"$CONTENTION_FILE"
+    on_exit stop_contention_sampler
+    (
+        set +e
+        while :; do
+            docker_local stats --no-stream --format '{{.CPUPerc}}' "$other" 2>/dev/null | tr -d '%' >>"$CONTENTION_FILE"
+            sleep 5
+        done
+    ) &
+    CONTENTION_SAMPLER=$!
+}
+# Prints {other_node, present, samples, mean_cpu, confounded}. A missing node counts as idle; a
+# present node with no samples leaves the verdict unknown (null), which the report excludes.
+contention_json() {
+    local present=false
+    if docker_local ps --format '{{.Names}}' | grep -Fxq "$(other_node_name)"; then present=true; fi
+    awk '$1 ~ /^[0-9.]+$/ { print $1 / 100 }' "${CONTENTION_FILE:-/dev/null}" 2>/dev/null |
+        jq -s -c --arg node "$(other_node_name)" --argjson present "$present" --argjson limit "$CONTENTION_LIMIT" '
+          (if length == 0 then null else (add / length * 100 | round / 100) end) as $mean |
+          {other_node: $node, present: $present, samples: length, mean_cpu: $mean, limit_cpu: $limit,
+           confounded: (if ($present | not) then false elif $mean == null then null else $mean > $limit end)}'
 }
 
 provenance_json() {
@@ -69,15 +113,17 @@ provenance_json() {
 # limits, mock settings, windows) is hashed, without its design field, into config_fingerprint, which
 # the report uses to decide which runs of the two designs are comparable.
 write_run_json() {
-    local now
+    local now contention
+    stop_contention_sampler
+    contention=$(contention_json)
     new_temp; now=$TEMP_FILE
     provenance_json >"$now"
-    jq -s '
+    jq -s --argjson contention "$contention" '
       .[0] as $start | .[1] as $end | .[2] as $fields |
       $start + {inputs_changed_during_run: ($start.input_fingerprint != $end.input_fingerprint or
                                             $start.commit != $end.commit)} |
       if .inputs_changed_during_run then .inputs_committed = false else . end |
-      . + $fields' "$RUN_PROVENANCE" "$now" "$1" >"$RUN_DIR/run.json"
+      . + {contention: $contention} + $fields' "$RUN_PROVENANCE" "$now" "$1" >"$RUN_DIR/run.json"
     if jq -e 'has("config")' "$RUN_DIR/run.json" >/dev/null; then
         local digest
         # The design is recorded but left out of the hash, so the same conditions in the two

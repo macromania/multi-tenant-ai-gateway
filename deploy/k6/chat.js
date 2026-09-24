@@ -27,6 +27,13 @@ for (const stream of plan.streams) {
 }
 
 const verdicts = new Counter('mtag_verdicts');
+// HTTP statuses per stream, so a run can prove which refusals it saw (0 is a transport error).
+const statuses = new Counter('mtag_statuses');
+const STATUS_CLASSES = ['0', '200', '401', '404', '429', '500', '502', '503', 'other'];
+function statusClass(status) {
+  const text = String(status);
+  return STATUS_CLASSES.indexOf(text) >= 0 ? text : 'other';
+}
 
 function seconds(value) {
   const match = /^([0-9]+)(s|m)$/.exec(value || '60s');
@@ -70,6 +77,9 @@ for (const stream of plan.streams) {
   thresholds[`dropped_iterations{scenario:${stream.name}}`] = ['count>=0'];
   for (const verdict of ['verified', 'leak', 'blocked', 'unverifiable', 'failed']) {
     thresholds[`mtag_verdicts{stream:${stream.name},verdict:${verdict}}`] = ['count>=0'];
+  }
+  for (const status of STATUS_CLASSES) {
+    thresholds[`mtag_statuses{stream:${stream.name},status:${status}}`] = ['count>=0'];
   }
 }
 
@@ -116,6 +126,7 @@ export function run() {
   const response = http.post(stream.url, stream.body || body(stream), { headers, timeout: stream.timeout || '60s' });
   const verdict = verdictFor(stream, response, probeId);
   verdicts.add(1, { verdict });
+  statuses.add(1, { status: statusClass(response.status) });
   if (stream.records) {
     console.log('PROBE ' + JSON.stringify({
       stream: stream.name, tenant: stream.tenant, gateway: stream.gateway || null,
@@ -137,6 +148,11 @@ export function handleSummary(data) {
       const found = values(`mtag_verdicts{stream:${stream.name},verdict:${verdict}}`);
       verdictCounts[verdict] = found ? found.count : 0;
     }
+    const statusCounts = {};
+    for (const status of STATUS_CLASSES) {
+      const found = values(`mtag_statuses{stream:${stream.name},status:${status}}`);
+      if (found && found.count > 0) statusCounts[status] = found.count;
+    }
     const requests = values(`http_reqs{stream:${stream.name}}`);
     const iterations = values(`iterations{scenario:${stream.name}}`);
     const dropped = values(`dropped_iterations{scenario:${stream.name}}`);
@@ -147,6 +163,7 @@ export function handleSummary(data) {
       dropped_iterations: dropped ? dropped.count : 0,
       failed_rate: (values(`http_req_failed{stream:${stream.name}}`) || { rate: 0 }).rate,
       duration_ms: values(`http_req_duration{stream:${stream.name}}`), verdicts: verdictCounts,
+      statuses: statusCounts,
     };
   }
   const summary = { run_id: plan.run_id, cluster: plan.cluster, streams: perStream,

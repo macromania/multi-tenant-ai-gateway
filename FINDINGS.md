@@ -159,3 +159,97 @@ Reviewed commit `788419a`. Fixes are in the commit "Fix the Milestone 4 review f
 | 1 | MEDIUM | Reapplying a tenant reactivated a key that offboarding had deactivated. | Reapply acts on the tenant's state: active tenants stay active, onboarding resumes with the staged activation, and a tenant being removed is refused with instructions to finish the removal. | Fixed |
 | 2 | MEDIUM | The duplicate check skipped every ConfigMap labelled with the departing tenant, so a copy in another namespace escaped it. | Only the tenant's own ConfigMap, by namespace and name, is excluded; a copied hash stopped removal in a live test. | Fixed |
 | 3 | MEDIUM | Cleaning up an incomplete tenant skipped the duplicate check and never proved that the key was refused. | Cleanup runs the duplicate check, deactivates the key, and requires every gateway in the cluster to refuse it at authentication before deleting anything. | Fixed |
+
+
+## Milestone 5: calibration, load, and the non-failure scenarios
+
+Reviewed commit `9feaa7b`. Fixes are in the commit "Fix the Milestone 5 to 8 review findings", which
+covers the reviews of Milestones 5 to 8 because they changed the same scripts.
+
+### Rubber-duck review (7 findings)
+
+| # | Severity | Finding | Resolution | Status |
+| --- | --- | --- | --- | --- |
+| 1 | Blocking | A failed tenant listing produced an empty journal snapshot, and restore then fell back to the cluster's current limits, which an experiment may have raised. | Every snapshot value is read into a variable first, the journal is written only when it holds every working-set tenant with a limit, key hash, and active state, and restore uses only journal limits when a journal exists. | Fixed |
+| 2 | Blocking | The entry and recovery checks tested only existence and one request, so a stopped controller, a partly rejected policy, or a proxy still enforcing a raised limit passed. | The checks now require each working-set tenant to be active, its controller and proxy ready, its limit policy fully accepted, and its proxy to enforce the expected limit (the journal's), before the request check. A failure to read the cluster counts as unhealthy. | Fixed |
+| 3 | Blocking | Calibration counted requests rather than verified responses, ignored probe outcomes and rates, and read missing telemetry as zero. | Calibration requires verified responses for 95 percent of the target and no other outcome, verified probes at their planned rate, and present mock request, in-flight, and throttling telemetry. | Fixed |
+| 4 | Blocking | Latency validity counted only verified responses, so 429s, drops, and errors could hide behind the count threshold. | Each measurement also records unverified responses, drops, and 429s (from new per-stream status counts in k6); any of them makes the run invalid with a stated reason. | Fixed |
+| 5 | Blocking | Calibration, scenario, and scale runs sampled the other node's CPU but never recorded it. | Sampling moved into every run record (`contention` in run.json, samples in other-node-cpu.txt), including onboarding and offboarding; the report excludes confounded runs and runs without a verdict. | Fixed |
+| 6 | Blocking | Configuration fingerprints left out the tenant population, the limits, and the mock replicas, and `make load` recorded unresolved settings. | Every experiment adds the tenants, their limits, and the mock replicas at the start of the run to its configuration; `make load` records its resolved profile, rate, duration, and upstream. | Fixed |
+| 7 | Non-blocking | `make load` probes ended before the attack's last requests. | Probes run 75 seconds longer than the attack and are stopped after it finishes. | Fixed |
+
+### Security review (1 finding)
+
+| # | Severity | Finding | Resolution | Status |
+| --- | --- | --- | --- | --- |
+| 1 | MEDIUM | Restore reapplied every tenant as active, so it could reactivate the key of a tenant whose offboarding had been interrupted. | The journal records each tenant's state; restore reapplies only active tenants and leaves onboarding and offboarding tenants as they are; experiments refuse to start while any tenant is part-way through a lifecycle change. Verified live with a tenant labelled offboarding. | Fixed |
+
+
+## Milestone 6: the ten failure modes
+
+Reviewed commit `233820c`. Fixes are in the commit "Fix the Milestone 5 to 8 review findings".
+
+### Rubber-duck review (9 findings)
+
+| # | Severity | Finding | Resolution | Status |
+| --- | --- | --- | --- | --- |
+| 1 | Blocking | The flood invocation check accepted any refusal as proof of throttling, so 401s or 404s would pass. | k6 now counts HTTP statuses per stream, and the check requires 429 responses. | Fixed |
+| 2 | Blocking | Unverifiable responses and 429s in attack streams, which write no records, did not affect validity. | Validity reads the attack summary's verdicts and statuses as well as the records. | Fixed |
+| 3 | Blocking | Attack delivery allowed up to 20 percent dropped iterations and never checked the achieved request count. | An attack is invalid with any dropped iteration (except proxy-memory, whose overloaded proxy is killed) or with less than 80 percent of its planned requests. | Fixed |
+| 4 | Blocking | The forged-header and cross-gateway streams escaped delivery checks, and the forged-header invocation counted baseline requests. | Delivery checks cover every stream that writes records, and the forged-header check requires 90 percent of the planned requests in each half. | Fixed |
+| 5 | Blocking | A failed snapshot could lose the original limits (same as Milestone 5 finding 1). | Fixed with Milestone 5 finding 1. | Fixed |
+| 6 | Blocking | Failure fingerprints left out tenant limits and the tenant population. | Fixed with Milestone 5 finding 6. | Fixed |
+| 7 | Blocking | Validity was decided before the final recovery check, so a run could be valid although the cluster failed that check. | The recovery check runs first, and its failure is a validity reason. | Fixed |
+| 8 | Non-blocking | The restore-start mark was taken before the invocation check, which includes deliberate waits, and was set even with `KEEP=1`. | A separate observe-end mark precedes the check; restore-start is taken immediately before the restore and is null with `KEEP=1`. | Fixed |
+| 9 | Non-blocking | Leak counts, extra-stream totals, and the during-restore bucket were not bounded by the end mark. | Every count uses only requests that started before the end mark; attack-stream leaks are added to the total. | Fixed |
+
+### Security review
+
+No findings.
+
+
+## Milestone 7: the scale sweep
+
+Reviewed commit `8fd1155`. Fixes are in the commit "Fix the Milestone 5 to 8 review findings".
+
+### Rubber-duck review (9 findings)
+
+| # | Severity | Finding | Resolution | Status |
+| --- | --- | --- | --- | --- |
+| 1 | Blocking | A failed `tenant-remove` was not checked inside the convergence loop, which runs where `set -e` does not apply, so it could loop forever. | Every command in the convergence is checked explicitly and ends the sweep with a recorded reason; a tenant still present after removal stops it. | Fixed |
+| 2 | Blocking | A measurement error exited without returning to the working set. | An exit hook returns an unfinished sweep to three tenants and checks their health, also after Ctrl-C. | Fixed |
+| 3 | Blocking | An existing but incomplete tenant counted as onboarded. | Convergence completes any tenant that is not active with `tenant-add`, requires every tenant to be active, and the sweep ends with the full health check. | Fixed |
+| 4 | Blocking | Stop conditions were checked only before adding a tenant. | They are also checked after converging, before each measurement, and after its load; a condition during a measurement makes that record invalid and stops the sweep. | Fixed |
+| 5 | Blocking | Scale records were never validated for delivery or contention. | Each step requires verified responses for 99 percent of every tenant's requests with no drops, and records contention like every other run. | Fixed |
+| 6 | Blocking | Missing telemetry became zero. | Each sample records how many gateway pods its CPU and memory figures cover; anything other than the expected count (2 shared, 2 per tenant dedicated), or missing reserved-capacity or series figures, makes the record invalid. | Fixed |
+| 7 | Blocking | The load window was measured from when the Job finished, including cleanup. | Scale streams write per-request records, and the load window is taken from the first and last request. | Fixed |
+| 8 | Blocking | Free memory came from summed container usage, ignored VM memory outside containers, and read zero when `docker stats` failed. | Free memory is `MemAvailable` from the Kind node's `/proc/meminfo`, which describes the whole Docker Desktop VM, and a failed read stops the sweep. | Fixed |
+| 9 | Non-blocking | CPU and memory rows were joined on the pod name only. | They are joined on namespace and pod. | Fixed |
+
+### Security review (1 finding)
+
+| # | Severity | Finding | Resolution | Status |
+| --- | --- | --- | --- | --- |
+| 1 | MEDIUM | Convergence removed the highest tenant regardless of whether it was in range or existed before the sweep, and supplied `CONFIRM=1` to `tenant-remove` itself, so it could delete an unrelated tenant and its keys. | The sweep refuses to start while any tenant outside tenant-01 to tenant-16 exists, and needs `CONFIRM=1` when it would remove tenants that existed before it started; convergence re-checks both before each removal. | Fixed |
+
+
+## Milestone 8: the report and documentation
+
+Reviewed commit `e9f3bdc`. Fixes are in the commit "Fix the Milestone 5 to 8 review findings".
+
+### Rubber-duck review (8 findings)
+
+| # | Severity | Finding | Resolution | Status |
+| --- | --- | --- | --- | --- |
+| 1 | Blocking | Some sections showed runs with different configuration fingerprints side by side, and the latest run of each cluster could hide an older matching pair. | Every comparison uses the latest pair whose fingerprints match; without one, each section says the runs are not compared. | Fixed |
+| 2 | Blocking | Failed offboarding records and underloaded scale records counted as usable. | Onboarding and offboarding must finish cleanly and scale records must be valid to be used. | Fixed |
+| 3 | Blocking | Only failure runs had a confounding verdict. | Fixed with Milestone 5 finding 5. | Fixed |
+| 4 | Blocking | A bystander with material latency degradation but no single slow request showed as not affected. | Material impact now implies impact, and the report shows it first. | Fixed |
+| 5 | Blocking | The leak warning looked only at usable runs and at one field name. | The warning lists leaks from every record, whichever field holds them, and says which runs are excluded. | Fixed |
+| 6 | Blocking | Lifecycle figures mixed runs made at different tenant counts, and medians of an even number of runs were wrong. | Lifecycle rows are grouped by configuration fingerprint, and even-sized medians average the middle two values. | Fixed |
+| 7 | Blocking | "Matching calibration" ignored the mock's replica count. | A calibration matches only with the same profile and mock replicas. | Fixed |
+| 8 | Non-blocking | Usable runs that no section showed disappeared without explanation. | The report adds a Foundry smoke section and lists every other usable run with the reason it is not shown. | Fixed |
+
+### Security review
+
+No findings.

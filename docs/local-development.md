@@ -235,7 +235,7 @@ and prints the summary. It does not change any limit.
 make calibrate CLUSTER=both
 make scenario CLUSTER=both NAME=separation
 make break CLUSTER=both FAILURE=proxy-crash
-make scale CLUSTER=both TENANTS=1,5,10
+make scale CLUSTER=both TENANTS=1,5,10 CONFIRM=1
 make results
 ```
 
@@ -256,8 +256,9 @@ its results. The mechanics:
   the journal once the recovery checks pass. A new experiment refuses to start while a journal
   exists.
 - Only one cluster is measured at a time. An experiment refuses to start while the other cluster
-  runs a load Job, and it samples the other Kind node's CPU; a run where that node averaged more
-  than 0.5 CPU is marked confounded.
+  runs a load Job. Every run record, including onboarding and offboarding, samples the other Kind
+  node's CPU (`run.json` `contention`, samples in `other-node-cpu.txt`); the report excludes a run
+  where that node averaged more than 0.5 CPU, or whose samples are missing.
 - Each run writes `results/<cluster>/<UTC time>-<kind>-<name>/`. `run.json` holds the Git commit,
   whether the inputs matched it at the start and the end, the input fingerprint (a SHA-256 over
   `Makefile`, `scripts/`, `deploy/`, `versions.env`, and `ports.env`, leaving out the report
@@ -325,8 +326,9 @@ Use `make status`, `make check`, and `make logs` to inspect failure. `make up` c
 verifies the existing cluster's identity and reapplies configuration.
 
 After an interrupted experiment, or one run with `KEEP=1`, run `make restore CLUSTER=...`. It
-reapplies every tenant's configuration from the journal and the stored keys, removes load Jobs,
-scales controllers back to one, and runs the recovery checks. It can be repeated.
+reapplies every active tenant's configuration from the journal (or, without one, from the cluster)
+and the stored keys, removes load Jobs, scales controllers back to one, and runs the recovery checks.
+A tenant that was onboarding or offboarding is left as it is. It can be repeated.
 
 ```bash
 make restore CLUSTER=shared

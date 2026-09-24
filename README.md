@@ -46,7 +46,7 @@ your current Kubernetes context, Docker context, or Azure subscription.
 make calibrate CLUSTER=both
 make scenario CLUSTER=both NAME=separation
 make break CLUSTER=both FAILURE=proxy-crash
-make scale CLUSTER=both TENANTS=1,5,10
+make scale CLUSTER=both TENANTS=1,5,10 CONFIRM=1
 make results
 ```
 

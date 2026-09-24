@@ -30,7 +30,7 @@ help_menu() {
     row 'make scenario NAME=...' 'separation, latency, rollout, foundry-smoke'
     row 'make break FAILURE=...' 'Trigger one failure, observe, and restore'
     row 'make restore' 'Return a cluster to its recorded state'
-    row 'make scale TENANTS=1,5,10' 'Measure footprint at each tenant count'
+    row 'make scale TENANTS=1,5,10' 'Measure footprint at each count (CONFIRM=1)'
     info ''
     info 'Failures: proxy-crash, bad-tenant-config, duplicate-key, flood (RAISE_LIMIT=1),'
     info '          slow-upstream, proxy-memory, controller-outage, credential-rotation,'

@@ -174,10 +174,10 @@ check_flood() {
         else
             invocation false "$(jq -r '"only \(.verdicts.verified) flood requests reached the mock"' <<<"$a")"
         fi
-    elif jq -e --argjson target "$(( rate * OBSERVE_SECONDS ))" '.requests >= 0.8 * $target and .verdicts.blocked > 0' <<<"$a" >/dev/null; then
-        invocation true "$(jq -r '"\(.requests) flood requests sent, \(.verdicts.blocked) refused with 429 at the tenant limit"' <<<"$a")"
+    elif jq -e --argjson target "$(( rate * OBSERVE_SECONDS ))" '.requests >= 0.8 * $target and (.statuses["429"] // 0) > 0' <<<"$a" >/dev/null; then
+        invocation true "$(jq -r '"\(.requests) flood requests sent, \(.statuses["429"]) refused with 429 at the tenant limit"' <<<"$a")"
     else
-        invocation false "$(jq -r '"\(.requests) flood requests sent, \(.verdicts.blocked) refused"' <<<"$a")"
+        invocation false "$(jq -r '"\(.requests) flood requests sent, statuses \(.statuses | tojson)"' <<<"$a")"
     fi
 }
 
@@ -185,7 +185,7 @@ prepare_slow-upstream() { raise_cause_limit; ATTACK_PROFILE=slow; }
 trigger_slow-upstream() { :; }
 check_slow-upstream() {
     local peak
-    peak=$(prom_instant "max_over_time(sum(mock_in_flight)[$(( OBSERVE_SECONDS + 30 ))s:5s])" "$(( RESTORE_START / 1000 ))" |
+    peak=$(prom_instant "max_over_time(sum(mock_in_flight)[$(( OBSERVE_SECONDS + 30 ))s:5s])" "$(( OBSERVE_END / 1000 ))" |
         jq '[.data.result[].value[1] | tonumber] | max // 0')
     note mock_in_flight_max "$peak"
     if awk -v p="$peak" 'BEGIN { exit !(p > 1000) }'; then
@@ -199,6 +199,9 @@ prepare_proxy-memory() {
     wait_for_restart_backoff_reset "$(cause_namespace)"
     raise_cause_limit
     ATTACK_PROFILE=memory
+    # The proxy this attack overloads is killed and restarted, which stalls its requests, so dropped
+    # iterations are expected; the attack must still send 80 percent of its plan.
+    ATTACK_DROPS_ALLOWED=true
     note before "$(proxy_container_state "$(cause_namespace)")"
 }
 trigger_proxy-memory() { :; }
@@ -207,7 +210,7 @@ check_proxy-memory() {
     before=$(jq -c '.before' <<<"$FAILURE_NOTES")
     after=$(proxy_container_state "$(cause_namespace)")
     peak=$(prom_instant "max_over_time(max(container_memory_working_set_bytes{namespace=\"$(cause_namespace)\",pod=~\"$GATEWAY-.*\",container=\"agentgateway\"})[$(( OBSERVE_SECONDS + 30 ))s:5s])" \
-        "$(( RESTORE_START / 1000 ))" | jq '[.data.result[].value[1] | tonumber] | max // 0')
+        "$(( OBSERVE_END / 1000 ))" | jq '[.data.result[].value[1] | tonumber] | max // 0')
     note proxy_max_sampled_working_set_bytes "$peak"
     if jq -e --argjson before "$before" --argjson trigger "$TRIGGER_START" '
         .restarts > $before.restarts and .last.reason == "OOMKilled" and
@@ -391,8 +394,20 @@ trigger_forged-tenant-header() {
     fi
 }
 check_forged-tenant-header() {
-    local sent value
+    local sent value short
     sent=$(current_records | jq '[.[] | select(.stream | startswith("forged-")) | select(.sent_tenant_header == "tenant-02")] | length')
+    # Every forged stream must have sent at least 90 percent of its planned requests in each half.
+    short=$(current_records | jq -r --argjson trigger "$TRIGGER_START" --argjson half "$HALF_AT" --argjson end "$OBSERVE_END" '
+      [.[] | select(.stream | startswith("forged-"))] | group_by(.stream) | map(
+        .[0].stream as $s |
+        ([.[] | select(.start_ms >= $trigger and .start_ms < $half)] | length) as $first |
+        ([.[] | select(.start_ms >= $half and .start_ms < $end)] | length) as $second |
+        select($first < 0.9 * 5 * ($half - $trigger) / 1000 or $second < 0.9 * 5 * ($end - $half) / 1000) |
+        "\($s) sent \($first) and \($second)") | join("; ")')
+    if [[ -n "$short" ]]; then
+        invocation false "a forged stream did not send enough requests in each half: $short"
+        return
+    fi
     if [[ "$CLUSTER" == shared ]]; then
         value=$(kube -n "$NAMESPACE" get agentgatewaypolicy tenant-routing -o jsonpath='{.spec.traffic.transformation.request.set[0].value}')
         note mistaken_routing_value "$(jq -Rn --arg v "$value" '$v')"
@@ -459,6 +474,9 @@ run_failure() {
     HALVES=
     HALF_AT=
     HEALTHY_AT=
+    ATTACK_DROPS_ALLOWED=false
+    RESTORE_START=
+    RESTORE_END=
     TARGET=$(failure_target "$failure")
     say_row 'Target' "$(jq -r '"\(.component) (serves \(.serves) tenant\(if .serves == 1 then "" else "s" end))"' <<<"$TARGET")"
     if fn_exists "prepare_$failure"; then "prepare_$failure"; fi
@@ -488,12 +506,12 @@ run_failure() {
         load_wait "$RUN_ID-a" attack 240
         load_finish "$RUN_ID-a" attack "$RUN_DIR" >/dev/null
     fi
-    RESTORE_START=$(node_now_ms)
+    OBSERVE_END=$(node_now_ms)
     "check_$failure"
     if [[ "${KEEP:-}" == 1 ]]; then
         warn 'KEEP=1: the failure is left in place; run make restore when done.'
-        RESTORE_END=
     else
+        RESTORE_START=$(node_now_ms)
         journal_stage restoring
         if fn_exists "restore_$failure"; then "restore_$failure"; fi
         restore_cluster
@@ -517,72 +535,77 @@ run_failure() {
     # Validity inputs from Prometheus: the mock's CPU throttling over the observe window, and any k6
     # container killed for memory.
     local observe_s mock_throttled k6_oom
-    observe_s=$(( (RESTORE_START - TRIGGER_START) / 1000 ))
+    observe_s=$(( (OBSERVE_END - TRIGGER_START) / 1000 ))
     mock_throttled=$(prom_instant "max(sum by (pod) (increase(container_cpu_cfs_throttled_periods_total{namespace=\"$MOCK_NAMESPACE\",container=\"mock\"}[${observe_s}s])) / sum by (pod) (increase(container_cpu_cfs_periods_total{namespace=\"$MOCK_NAMESPACE\",container=\"mock\"}[${observe_s}s])))" \
-        "$(( RESTORE_START / 1000 ))" | jq '[.data.result[].value[1] | tonumber] | max // 0')
+        "$(( OBSERVE_END / 1000 ))" | jq '[.data.result[].value[1] | tonumber? // empty] | max')
     k6_oom=$(prom_instant "max(max_over_time(kube_pod_container_status_terminated_reason{namespace=\"$LOAD_NAMESPACE\",reason=\"OOMKilled\"}[${window}s]))" \
         "$(( end / 1000 ))" | jq '[.data.result[].value[1] | tonumber] | max // 0')
     prom_close
     cp -- "$PROM_LOG" "$RUN_DIR/prometheus.json"
     save_events "$probe_start" "$end"
+    # The final recovery check is part of validity, so it runs before validity is decided.
+    local checks_passed=null
+    if [[ "${KEEP:-}" != 1 ]]; then
+        if [[ "$recovered" == true ]] && recovery_checks 60; then checks_passed=true; else checks_passed=false; fi
+    fi
     # Validity inputs specific to this run.
     local extra_reasons oom_pods
     oom_pods=$(kube get pods -n "$MOCK_NAMESPACE" -o json | jq --argjson trigger "$TRIGGER_START" '
       [.items[].status.containerStatuses[]? | select(.lastState.terminated.reason == "OOMKilled" and
         ((.lastState.terminated.finishedAt | fromdateiso8601) * 1000 >= $trigger))] | length')
     extra_reasons=$(jq -nc --argjson invocation "$INVOCATION" --argjson oom "$oom_pods" --arg recovered "$recovered" \
-        --argjson throttled "$mock_throttled" --argjson k6_oom "$k6_oom" '[
+        --argjson throttled "${mock_throttled:-null}" --argjson k6_oom "$k6_oom" --argjson checks "$checks_passed" '[
       (if $invocation.ok then empty else "the invocation check failed: " + $invocation.evidence end),
       (if $oom > 0 then "a mock replica was OOM-killed" else empty end),
       (if $k6_oom > 0 then "a k6 container was OOM-killed" else empty end),
-      (if $throttled > 0.1 then "the mock was CPU-throttled in \($throttled * 100 | floor) percent of the observe window" else empty end),
-      (if $recovered == "false" then "tenants did not recover within the recovery timeout" else empty end)]')
+      (if $throttled == null then "no mock CPU throttling telemetry"
+       elif $throttled > 0.1 then "the mock was CPU-throttled in \($throttled * 100 | floor) percent of the observe window" else empty end),
+      (if $recovered == "false" then "tenants did not recover within the recovery timeout" else empty end),
+      (if $checks == false then "the cluster did not pass the recovery checks after the restore" else empty end)]')
     printf '%s' "$extra_reasons" >"$RUN_DIR/validity-extra.json"
     local attack_rate=0 raised=false validity marks impact fields
     if [[ -n "$ATTACK_PROFILE" ]]; then attack_rate=$(profile_json "$ATTACK_PROFILE" | jq '.rate'); fi
     [[ "$(jq -r '.notes.raised_limit // false' "$(journal_file)")" != true ]] || raised=true
-    validity=$(validity_json "$RUN_DIR" "$attack_rate" "$raised")
+    validity=$(validity_json "$RUN_DIR" "$attack_rate" "$raised" "$OBSERVE_SECONDS" "$end" "$ATTACK_DROPS_ALLOWED")
     marks=$(jq -nc --argjson probe "$probe_start" --argjson trigger "$TRIGGER_START" --argjson trigger_end "$TRIGGER_END" \
-        --arg half "$HALF_AT" --argjson restore "$RESTORE_START" --arg restore_end "$RESTORE_END" --argjson end "$end" '{
+        --arg half "$HALF_AT" --argjson observe_end "$OBSERVE_END" --arg restore "$RESTORE_START" --arg restore_end "$RESTORE_END" \
+        --argjson end "$end" '{
       probe_start:$probe, trigger_start:$trigger, trigger_end:$trigger_end, half:($half | tonumber? // null),
-      restore_start:$restore, restore_end:($restore_end | tonumber? // null), end:$end}')
+      observe_end:$observe_end, restore_start:($restore | tonumber? // null), restore_end:($restore_end | tonumber? // null), end:$end}')
     local cause_arg=null
     if [[ "$failure" == flood ]]; then cause_arg="\"$CAUSE\""; fi
     impact=$(jq -s -c --argjson m "$marks" --argjson cause "$cause_arg" "$IMPACT_JQ"' map(select(.stream | startswith("probe-"))) | impact($m; $cause)' \
         "$RUN_DIR/probes-probe.jsonl")
     # Extra streams (forged or cross-gateway requests) are expected to be refused; only their verdicts matter.
     local extras
-    extras=$(jq -s -c '[.[] | select(.stream | startswith("probe-") | not)] | group_by(.stream) |
+    extras=$(jq -s -c --argjson end "$end" '[.[] | select((.stream | startswith("probe-") | not) and .start_ms < $end)] | group_by(.stream) |
       map({stream: .[0].stream, requests: length, verdicts: (group_by(.verdict) | map({(.[0].verdict): length}) | add)})' \
         "$RUN_DIR/probes-probe.jsonl")
     local halves='null'
     if [[ -n "$HALVES" ]]; then
         halves=$(jq -s -c --argjson m "$marks" '
-          [.[] | select(.verdict == "leak")] as $leaks |
-          {first_half: {leaks: ([$leaks[] | select(.start_ms >= $m.trigger_start and .start_ms < $m.half)] | length),
-                        by_stream: ([$leaks[] | select(.start_ms >= $m.trigger_start and .start_ms < $m.half) | .stream] | group_by(.) | map({(.[0]): length}) | add // {})},
-           second_half: {leaks: ([$leaks[] | select(.start_ms >= $m.half and .start_ms < $m.restore_start)] | length),
-                         by_stream: ([$leaks[] | select(.start_ms >= $m.half and .start_ms < $m.restore_start) | .stream] | group_by(.) | map({(.[0]): length}) | add // {})},
-           during_restore: {leaks: ([$leaks[] | select(.start_ms >= $m.restore_start)] | length),
-                            by_stream: ([$leaks[] | select(.start_ms >= $m.restore_start) | .stream] | group_by(.) | map({(.[0]): length}) | add // {})}}' \
+          ($m.restore_start // $m.end) as $second_end |
+          [.[] | select(.verdict == "leak" and .start_ms < $m.end)] as $leaks |
+          def bucket($from; $to): [$leaks[] | select(.start_ms >= $from and .start_ms < $to)] |
+            {leaks: length, by_stream: (map(.stream) | group_by(.) | map({(.[0]): length}) | add // {})};
+          {first_half: bucket($m.trigger_start; $m.half), second_half: bucket($m.half; $second_end),
+           during_restore: (if $m.restore_start == null then null else bucket($m.restore_start; $m.end) end)}' \
             "$RUN_DIR/probes-probe.jsonl")
     fi
-    local checks_passed=null
-    if [[ "${KEEP:-}" != 1 ]]; then
-        if [[ "$recovered" == true ]] && recovery_checks 60; then
-            checks_passed=true
-            rm -f -- "$(journal_file)"
-        else
-            checks_passed=false
-            warn "The cluster did not fully recover; the journal is kept. Run make restore CLUSTER=$CLUSTER."
-        fi
+    if [[ "$checks_passed" == true ]]; then
+        rm -f -- "$(journal_file)"
+    elif [[ "$checks_passed" == false ]]; then
+        warn "The cluster did not fully recover; the journal is kept. Run make restore CLUSTER=$CLUSTER."
     fi
+    local attack_leaks=0
+    [[ ! -s "$RUN_DIR/k6-summary-attack.json" ]] ||
+        attack_leaks=$(jq '[.streams[] | select(.role == "attack") | .verdicts.leak] | add // 0' "$RUN_DIR/k6-summary-attack.json")
     new_temp; fields=$TEMP_FILE
     jq -n --arg run "$RUN_ID" --arg failure "$failure" --argjson marks "$marks" --argjson impact "$impact" \
         --argjson validity "$validity" --argjson invocation "$INVOCATION" --argjson notes "$FAILURE_NOTES" \
         --argjson resources "$resources" --argjson halves "$halves" --arg cause "$CAUSE" --arg keep "${KEEP:-}" \
         --argjson extras "$extras" --argjson target "$TARGET" --arg recovered "$recovered" --arg healthy "$HEALTHY_AT" \
-        --argjson checks "$checks_passed" \
+        --argjson checks "$checks_passed" --argjson attack_leaks "$attack_leaks" \
         --arg raise "${RAISE_LIMIT:-}" --arg profile "$ATTACK_PROFILE" \
         --argjson profile_json "$( [[ -n "$ATTACK_PROFILE" ]] && profile_json "$ATTACK_PROFILE" || printf 'null')" \
         --argjson replicas "$(kube -n "$MOCK_NAMESPACE" get deployment mock -o jsonpath='{.spec.replicas}')" \
@@ -592,7 +615,7 @@ run_failure() {
               attack_profile:$profile_json, raise_limit:($raise == "1"), keep:($keep == "1"), mock_replicas:$replicas, design:env.CLUSTER},
       target:$target,
       marks:$marks, invocation:$invocation, notes:$notes, impact:$impact, extra_streams:$extras, halves:$halves,
-      leaks_total:(([$impact[].leaks] | add // 0) + ([$extras[].verdicts.leak // 0] | add // 0)),
+      leaks_total:(([$impact[].leaks] | add // 0) + ([$extras[].verdicts.leak // 0] | add // 0) + $attack_leaks),
       recovery:{restored:($keep != "1"), healthy:($keep != "1" and $recovered == "true"),
                 restore_ms:(if $marks.restore_end == null then null else $marks.restore_end - $marks.restore_start end),
                 healthy_after_restore_ms:($healthy | tonumber? // null | if . == null then null else . - $marks.restore_start end),
@@ -620,7 +643,7 @@ print_failure_summary() {
     if jq -e '.halves != null' "$run" >/dev/null; then
         say_row 'Leaks, first half' "$(jq -r '.halves.first_half | "\(.leaks) \(.by_stream)"' "$run")"
         say_row 'Leaks, second half' "$(jq -r '.halves.second_half | "\(.leaks) \(.by_stream)"' "$run")"
-        say_row 'Leaks, during restore' "$(jq -r '.halves.during_restore | "\(.leaks) \(.by_stream)"' "$run")"
+        say_row 'Leaks, during restore' "$(jq -r '.halves.during_restore // {leaks: "not restored", by_stream: ""} | "\(.leaks) \(.by_stream)"' "$run")"
     fi
     say_row 'Leaks' "$(jq -r '.leaks_total' "$run")"
     say_row 'Recovery' "$(jq -r --arg cluster "$CLUSTER" '.recovery |
