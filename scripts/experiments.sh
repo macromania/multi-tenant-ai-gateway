@@ -245,6 +245,86 @@ other_cluster_busy() {
     [[ "$jobs" -gt 0 ]]
 }
 
+# ---------------------------------------------------------------------------------------------
+# Probe analysis. Records are classified by their start time against the recorded mutation times.
+# ---------------------------------------------------------------------------------------------
+IMPACT_JQ='
+def pct($values; $q): ($values | sort) as $s | if ($s | length) == 0 then null else $s[((($s | length) - 1) * $q) | floor] end;
+def failed($cause): .verdict != "verified" and (($cause != null and .tenant == $cause and .status == 429) | not);
+def impact($m; $cause):
+  group_by(.stream) | map(
+    sort_by(.start_ms) as $all |
+    # The analysis window ends at the end mark; a request started later belongs to the stop.
+    [$all[] | select(.verdict != "censored" and .start_ms < $m.end)] as $r |
+    ($m.restore_start // $m.end) as $restore |
+    [$r[] | select(.start_ms < $m.trigger_start)] as $base |
+    [$r[] | select(.start_ms >= $m.trigger_start and .start_ms < $restore)] as $observe |
+    [$r[] | select(.start_ms >= $restore)] as $recover |
+    pct([$base[] | select(.verdict == "verified") | .duration_ms]; 0.95) as $base_p95 |
+    pct([$observe[] | select(.verdict == "verified") | .duration_ms]; 0.95) as $observe_p95 |
+    [$r[] | select(.start_ms >= $m.trigger_start)] as $after |
+    ([$after[] | select(failed($cause))] | length) as $after_failed |
+    [$after[] | select($base_p95 != null and .verdict == "verified" and .duration_ms > 5 * $base_p95)] as $slow |
+    (reduce range(0; $after | length) as $i ({episodes: [], open: null};
+       if ($after[$i] | failed($cause)) then (if .open == null then .open = $after[$i].start_ms else . end)
+       elif .open != null then .episodes += [{start_ms: (.open - $m.trigger_start), duration_ms: ($after[$i].start_ms - .open)}] | .open = null
+       else . end) |
+     if .open != null then .episodes += [{start_ms: (.open - $m.trigger_start), duration_ms: ($m.end - .open), unfinished: true}] else . end |
+     .episodes) as $episodes |
+    ([$after[] | select(failed($cause)) | .start_ms] | max) as $last_failure |
+    def healthy_after($from): [range(0; $r | length) as $i | select($r[$i].start_ms > $from and
+        ($r[$i:$i + 25] | length) == 25 and ($r[$i:$i + 25] | all(.verdict == "verified"))) | $r[$i].start_ms] | first;
+    {stream: $all[0].stream, tenant: $all[0].tenant, cause: ($cause != null and $all[0].tenant == $cause),
+     requests: ($all | length), censored: ([$all[] | select(.verdict == "censored")] | length),
+     baseline: {requests: ($base | length), failed: ([$base[] | select(failed($cause))] | length), p95_ms: $base_p95},
+     observe: {requests: ($observe | length), failed: ([$observe[] | select(failed($cause))] | length), p95_ms: $observe_p95,
+               expected_429: ([$observe[] | select($cause != null and .tenant == $cause and .status == 429)] | length)},
+     recover: {requests: ($recover | length), failed: ([$recover[] | select(failed($cause))] | length)},
+     statuses: ([$after[] | select(failed($cause)) | (.status | tostring)] | group_by(.) | map({(.[0]): length}) | add // {}),
+     leaks: ([$all[] | select(.verdict == "leak")] | length),
+     unverifiable: ([$all[] | select(.verdict == "unverifiable")] | length),
+     slow: {count: ($slow | length), threshold_ms: (if $base_p95 == null then null else 5 * $base_p95 end),
+            max_ms: ([$slow[].duration_ms] | max)},
+     any_impact: ($after_failed > 0 or ($slow | length) > 0),
+     material_impact: ((($observe | length) > 0 and ([$observe[] | select(failed($cause))] | length) / ($observe | length) > 0.01) or
+                       ($base_p95 != null and $observe_p95 != null and $observe_p95 > 2 * $base_p95)),
+     episodes: $episodes, failed_time_ms: ([$episodes[].duration_ms] | add // 0),
+     recovery_after_trigger_ms: (if $last_failure == null then null else ((healthy_after($last_failure)) as $h | if $h == null then null else $h - $m.trigger_start end) end),
+     recovery_after_restore_ms: (if $last_failure == null or $m.restore_start == null then null
+        else ((healthy_after([$last_failure, $m.restore_start] | max)) as $h | if $h == null then null else $h - $m.restore_start end) end)});'
+
+# ---------------------------------------------------------------------------------------------
+# Validity: the apparatus must have delivered the workload, or a design can look better than it is.
+# ---------------------------------------------------------------------------------------------
+# validity_json <run dir> <attack target rate or 0> <raised limit true|false>: prints {valid, reasons}
+validity_json() {
+    local dir=$1 attack_rate=$2 raised=$3 other_cpu=0
+    if [[ -n "$OTHER_FILE" && -s "$OTHER_FILE" ]]; then
+        other_cpu=$(awk '{ if ($1 ~ /^[0-9.]+$/) { s += $1; n++ } } END { if (n) printf "%.2f", s / n / 100; else print 0 }' "$OTHER_FILE")
+    fi
+    jq -n --slurpfile probe "$dir/k6-summary-probe.json" --slurpfile records <(cat "$dir"/probes-*.jsonl 2>/dev/null) \
+        --arg attack_file "$dir/k6-summary-attack.json" --argjson attack_rate "$attack_rate" --arg raised "$raised" \
+        --argjson other "$other_cpu" --slurpfile attack <(cat "$dir/k6-summary-attack.json" 2>/dev/null || printf '{}') \
+        --slurpfile extra <(cat "$dir/validity-extra.json" 2>/dev/null || printf '[]') '
+      ($probe[0].streams | to_entries | map(select(.value.role == "probe"))) as $probes |
+      [
+        (if any($probes[]; .value.dropped_iterations > 0) then "probe iterations were dropped" else empty end),
+        ($records | map(select(.stream | startswith("probe-"))) | group_by(.stream) |
+         map(select(length > 1 and length < 0.99 * $probe[0].streams[.[0].stream].target_rate *
+             ((map(.start_ms) | max) - (map(.start_ms) | min)) / 1000 - 5)) | map(.[0].stream) |
+         if length > 0 then "probes delivered fewer than 99 percent of their planned requests: " + join(", ") else empty end),
+        (if any($records[]; .verdict == "unverifiable") then "a response was unverifiable" else empty end),
+        (if $raised == "true" and any($records[]; .status == 429) then "a raised-limit run saw 429" else empty end),
+        (if $attack_rate > 0 then
+           ($attack[0].streams // {} | to_entries | map(select(.value.role == "attack"))) as $a |
+           if ($a | length) == 0 then "the attack produced no summary"
+           elif any($a[]; .value.dropped_iterations > 0.2 * .value.iterations) then "the attack dropped more than 20 percent of its iterations"
+           else empty end
+         else empty end)
+      ] + $extra[0] as $reasons |
+      {valid: ($reasons | length == 0), reasons: $reasons, other_node_cpu: $other, confounded: ($other > 0.5)}'
+}
+
 grafana_links() {
     jq -nc --arg port "$GRAFANA_PORT" --argjson from "$1" --argjson to "$2" '{
       tenants: ("http://127.0.0.1:" + $port + "/d/mtag-tenants?from=\($from)&to=\($to)&var-tenant=All"),
@@ -660,8 +740,11 @@ restore_command() {
     ok 'The cluster is restored and every working-set tenant is healthy'
 }
 
+source "$ROOT/scripts/failures.sh"
+
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     case "${1:-}" in
+        break) select_cluster_or_both experiments.sh "$@"; verify_context; run_failure "${FAILURE:-}" ;;
         calibrate) select_cluster_or_both experiments.sh "$@"; verify_context; calibrate ;;
         scenario)
             select_cluster_or_both experiments.sh "$@"; verify_context
