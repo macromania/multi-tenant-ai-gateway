@@ -1,4 +1,7 @@
-# Strict API key authentication before routing. With no tenant keys, every request gets 401.
+# Strict API key authentication before routing. With no active tenant keys, every request gets 401.
+# A key ConfigMap takes part only once gateway.dev/key-active is "true", so a tenant's limit and route
+# can be installed and verified before its key is accepted, and its key can be revoked before they
+# are removed.
 apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayPolicy
 metadata:
@@ -16,3 +19,4 @@ spec:
       configMapSelector:
         matchLabels:
           gateway.dev/component: tenant-key
+          gateway.dev/key-active: "true"

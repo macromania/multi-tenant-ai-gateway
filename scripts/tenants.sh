@@ -51,9 +51,10 @@ gateway_url() {
     printf 'http://%s.%s.svc/mock/v1/chat/completions' "$GATEWAY" "$(tenant_namespace "$1")"
 }
 
-# apply_tenant_objects <tenant> <namespace> <limit> <key ConfigMap name> <provider Secret name> <backend name>
+# apply_tenant_objects <tenant> <namespace> <limit> <key ConfigMap> <provider Secret> <backend> <true|false>
+# The last argument sets gateway.dev/key-active; tenant-auth accepts the key only when it is "true".
 apply_tenant_objects() {
-    local tenant=$1 namespace=$2 limit=$3 key_name=$4 secret_name=$5 backend_name=$6 file hash
+    local tenant=$1 namespace=$2 limit=$3 key_name=$4 secret_name=$5 backend_name=$6 active=$7 file hash
     hash=$(key_hash "$tenant")
     new_temp; file=$TEMP_FILE
     tenant_key "$tenant" MOCK | jq -Rs --arg name "$secret_name" --arg namespace "$namespace" --arg tenant "$tenant" '{
@@ -71,10 +72,10 @@ apply_tenant_objects() {
     kube_apply -f "$file" >/dev/null
     new_temp; file=$TEMP_FILE
     jq -n --arg name "$key_name" --arg namespace "$namespace" --arg tenant "$tenant" --arg hash "$hash" \
-        --arg limit "$limit" '{
+        --arg limit "$limit" --arg active "$active" '{
       apiVersion:"v1",kind:"ConfigMap",
       metadata:{name:$name,namespace:$namespace,
-                labels:{"gateway.dev/component":"tenant-key","gateway.dev/tenant":$tenant},
+                labels:{"gateway.dev/component":"tenant-key","gateway.dev/tenant":$tenant,"gateway.dev/key-active":$active},
                 annotations:{"gateway.dev/tokens-per-minute":$limit}},
       data:{($tenant):({keyHash:$hash,metadata:{tenant:$tenant}} | tojson)}}' >"$file"
     kube_apply -f "$file" >/dev/null
@@ -87,12 +88,13 @@ render_shared() {
     new_temp; configmaps=$TEMP_FILE
     kube -n "$NAMESPACE" get configmaps -l gateway.dev/component=tenant-key -o json >"$configmaps"
     new_temp; tenants=$TEMP_FILE
-    jq '[.items[] | {tenant: (.metadata.labels["gateway.dev/tenant"] // ""),
+    jq --argjson max "$MAX_TOKENS_PER_MINUTE" '[.items[] | {name: .metadata.name, tenant: (.metadata.labels["gateway.dev/tenant"] // ""),
                      limit: (.metadata.annotations["gateway.dev/tokens-per-minute"] // "")} |
          select(.tenant | test("^tenant-[0-9]{2}$"))] | sort_by(.tenant) |
-        if all(.[]; .limit | test("^[1-9][0-9]{0,9}$")) then map(.limit |= tonumber)
-        else error("a tenant key ConfigMap has an invalid limit annotation") end' "$configmaps" >"$tenants" ||
-        die "A tenant key ConfigMap has an invalid limit annotation."
+        (map(select((.limit | test("^[1-9][0-9]{0,9}$") | not) or ((.limit | tonumber) > $max))) | map(.name)) as $bad |
+        if ($bad | length) == 0 then map(.limit |= tonumber)
+        else error("invalid limit annotation on " + ($bad | join(", "))) end' "$configmaps" >"$tenants" ||
+        die "A tenant key ConfigMap has a limit that is not an integer from 1 to $MAX_TOKENS_PER_MINUTE."
     count=$(jq length "$tenants")
     if [[ "$count" -eq 0 ]]; then
         kube -n "$NAMESPACE" delete agentgatewaypolicy tenant-limits --ignore-not-found >/dev/null
@@ -126,6 +128,111 @@ render_shared() {
     wait_status "$NAMESPACE" httproute/mock-chat route ResolvedRefs
 }
 
+# Rebuilds one dedicated tenant's limit policy and mock route from its key ConfigMap. The policy
+# keeps the conditional form, with a single entry, so that a configuration mistake has the same
+# shape in both designs; only the number of tenants sharing the object differs.
+render_tenant() {
+    local tenant=$1 limit policy route
+    limit=$(kube -n "$tenant" get configmap tenant-key -o jsonpath='{.metadata.annotations.gateway\.dev/tokens-per-minute}')
+    validate_limit "$limit"
+    new_temp; policy=$TEMP_FILE
+    jq -n --arg namespace "$tenant" --arg gateway "$GATEWAY" --arg tenant "$tenant" --argjson limit "$limit" '{
+      apiVersion:"agentgateway.dev/v1alpha1",kind:"AgentgatewayPolicy",
+      metadata:{name:"tenant-limits",namespace:$namespace,labels:{"gateway.dev/component":"tenant-limits"}},
+      spec:{targetRefs:[{group:"gateway.networking.k8s.io",kind:"Gateway",name:$gateway}],
+            traffic:{rateLimit:{conditional:[{condition:("apiKey.tenant == \"" + $tenant + "\""),
+                                              policy:{local:[{tokens:$limit,unit:"Minutes"}]}}]}}}}' >"$policy"
+    new_temp; route=$TEMP_FILE
+    jq -n --arg namespace "$tenant" --arg gateway "$GATEWAY" --arg tenant "$tenant" '{
+      apiVersion:"gateway.networking.k8s.io/v1",kind:"HTTPRoute",
+      metadata:{name:"mock-chat",namespace:$namespace,labels:{"gateway.dev/component":"tenant-routes"}},
+      spec:{parentRefs:[{name:$gateway,sectionName:"http"}],
+            rules:[{name:$tenant,
+              matches:[{method:"POST",path:{type:"Exact",value:"/mock/v1/chat/completions"}}],
+              backendRefs:[{group:"agentgateway.dev",kind:"AgentgatewayBackend",name:"mock"}]}]}}' >"$route"
+    kube_apply -f "$policy" >/dev/null
+    kube_apply -f "$route" >/dev/null
+    wait_status "$tenant" agentgatewaypolicy/tenant-limits policy Accepted
+    wait_status "$tenant" httproute/mock-chat route Accepted
+    wait_status "$tenant" httproute/mock-chat route ResolvedRefs
+}
+
+foundry_configured() {
+    [[ -f "$STATE/foundry.json" ]] && jq -e '.phase == "configured"' "$STATE/foundry.json" >/dev/null
+}
+
+# A complete agentgateway for one tenant in its own namespace: its own Helm release (controller and
+# GatewayClass), Gateway and proxy, authentication, telemetry, key, limit, mock route, and backend.
+apply_dedicated_tenant() {
+    local tenant=$1 limit=$2 active=$3 file values attempt
+    new_temp; file=$TEMP_FILE
+    jq -n --arg tenant "$tenant" '{apiVersion:"v1",kind:"Namespace",
+      metadata:{name:$tenant,labels:{"gateway.dev/tenant":$tenant,"gateway.dev/component":"tenant"}}}' >"$file"
+    kube_apply -f "$file" >/dev/null
+    new_temp; values=$TEMP_FILE
+    jq -n --arg tenant "$tenant" '{gatewayClassName:("agw-" + $tenant), controllerName:("agentgateway.dev/" + $tenant),
+      rbac:{gatewayNamespaces:[$tenant]},
+      discoveryNamespaceSelectors:[{matchLabels:{"kubernetes.io/metadata.name":$tenant}}],
+      monitoring:{proxy:{gatewayClassNames:[("agw-" + $tenant)]}}}' >"$values"
+    helm_local upgrade --install "agw-$tenant" oci://cr.agentgateway.dev/charts/agentgateway \
+        --version "$AGENTGATEWAY_VERSION" --namespace "$tenant" \
+        --values "$ROOT/deploy/agentgateway/tenant-values.yaml" --values "$values" --wait --timeout 5m >&2
+    new_temp; file=$TEMP_FILE
+    sed "s/@NAMESPACE@/$tenant/g" "$ROOT/deploy/agentgateway/tenant-gateway.yaml.tmpl" >"$file"
+    kube_apply -f "$file" >/dev/null
+    kube wait "gatewayclass/agw-$tenant" --for=condition=Accepted --timeout=300s >/dev/null
+    kube -n "$tenant" wait "gateway/$GATEWAY" --for=condition=Programmed --timeout=300s >/dev/null
+    for ((attempt=0; attempt<120; attempt++)); do
+        kube -n "$tenant" get "deployment/$GATEWAY" >/dev/null 2>&1 && break
+        sleep 1
+    done
+    kube -n "$tenant" rollout status "deployment/$GATEWAY" --timeout=300s >/dev/null
+    new_temp; file=$TEMP_FILE
+    sed "s/@NAMESPACE@/$tenant/g" "$ROOT/deploy/agentgateway/tenant-auth.yaml.tmpl" >"$file"
+    kube_apply -f "$file" >/dev/null
+    new_temp; file=$TEMP_FILE
+    sed "s/@NAMESPACE@/$tenant/g" "$ROOT/deploy/agentgateway/tenant-telemetry.yaml.tmpl" >"$file"
+    kube_apply -f "$file" >/dev/null
+    apply_tenant_objects "$tenant" "$tenant" "$limit" tenant-key mock-provider mock "$active"
+    render_tenant "$tenant"
+    wait_status "$tenant" agentgatewaypolicy/tenant-auth policy Accepted
+    wait_status "$tenant" agentgatewaypolicy/tenant-telemetry policy Accepted
+}
+
+dedicated_cluster_objects() {
+    printf '%s\n' "clusterrole/agentgateway-$1" "clusterrole/agentgateway-$1-deployer" \
+        "clusterrolebinding/agentgateway-role-$1" "clusterrolebinding/agentgateway-write-role-$1" \
+        "gatewayclass/agw-$1"
+}
+
+# Removes a dedicated tenant: its Gateway (and so its proxy), its Helm release, the GatewayClass its
+# controller created (neither Helm nor namespace deletion removes it), and its namespace.
+remove_dedicated_tenant() {
+    local tenant=$1 controller attempt
+    kube -n "$tenant" delete gateway "$GATEWAY" --ignore-not-found --wait=true --timeout=120s >/dev/null
+    for ((attempt=0; attempt<120; attempt++)); do
+        kube -n "$tenant" get "deployment/$GATEWAY" >/dev/null 2>&1 || break
+        sleep 1
+    done
+    helm_local uninstall "agw-$tenant" --namespace "$tenant" --ignore-not-found --wait --timeout 5m >&2
+    controller=$(kube get gatewayclass "agw-$tenant" --ignore-not-found -o jsonpath='{.spec.controllerName}')
+    if [[ -n "$controller" ]]; then
+        [[ "$controller" == "agentgateway.dev/$tenant" ]] ||
+            die "GatewayClass agw-$tenant belongs to $controller, not to $tenant; it was not deleted."
+        kube delete gatewayclass "agw-$tenant" --wait=true >/dev/null
+    fi
+    kube delete namespace "$tenant" --ignore-not-found --wait=true --timeout=300s >/dev/null
+}
+
+dedicated_cleaned() {
+    local objects
+    objects=$(kube get namespace "$1" --ignore-not-found -o name) || return 1
+    [[ -z "$objects" ]] || return 1
+    objects=$(dedicated_cluster_objects "$1" | xargs kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$CONTEXT" \
+        get --ignore-not-found -o name) || return 1
+    [[ -z "$objects" ]]
+}
+
 # The token limit the proxy actually enforces for a tenant, or nothing. The proxy stores a single
 # conditional entry as an object and several as a list.
 enforced_limit() {
@@ -149,165 +256,370 @@ probe_records() {
         grep '^PROBE ' | cut -c7- || true
 }
 
-shared_objects_for() {
-    printf '%s\n' "ConfigMap/$1-key" "Secret/mock-provider-$1" "AgentgatewayBackend/mock-$1"
+# apply_design_tenant <tenant> <limit> <true|false>: all of a tenant's objects, with its key active or not.
+apply_design_tenant() {
+    if [[ "$CLUSTER" == shared ]]; then
+        apply_tenant_objects "$1" "$NAMESPACE" "$2" "$1-key" "mock-provider-$1" "mock-$1" "$3"
+        render_shared
+    else
+        apply_dedicated_tenant "$1" "$2" "$3"
+    fi
+}
+
+key_configmap() {
+    if [[ "$CLUSTER" == shared ]]; then printf '%s-key' "$1"; else printf 'tenant-key'; fi
+}
+
+set_key_active() {
+    kube -n "$(tenant_namespace "$1")" label configmap "$(key_configmap "$1")" \
+        "gateway.dev/key-active=$2" --overwrite >/dev/null
+}
+
+stored_limit() {
+    local limit
+    limit=$(kube -n "$(tenant_namespace "$1")" get configmap "$(key_configmap "$1")" \
+        -o jsonpath='{.metadata.annotations.gateway\.dev/tokens-per-minute}') || die "Cannot read the limit of $1."
+    validate_limit "$limit"
+    printf '%s' "$limit"
+}
+
+# Refuses to continue if the tenant's key hash is also stored for another tenant, because then the
+# key would still authenticate, as that other tenant, after this tenant is removed.
+duplicate_hash_check() {
+    local tenant=$1 hash duplicates
+    hash=$(key_hash "$tenant")
+    duplicates=$(kube get configmaps -A -l gateway.dev/component=tenant-key -o json | jq -r --arg tenant "$tenant" --arg hash "$hash" '
+      [.items[] | select(.metadata.labels["gateway.dev/tenant"] != $tenant) |
+       select([.data[]? | (fromjson? // {}) | .keyHash] | index($hash)) |
+       .metadata.namespace + "/" + .metadata.name] | join(", ")') || die "Cannot read the tenant key ConfigMaps."
+    [[ -z "$duplicates" ]] || die "$tenant's key hash is also stored in $duplicates; fix that first."
+}
+
+# Anything left of a tenant, including a partly added or partly removed one.
+tenant_artifacts() {
+    local tenant=$1 found
+    if [[ "$CLUSTER" == shared ]]; then
+        found=$(kube -n "$NAMESPACE" get configmaps,secrets,agentgatewaybackends -l "gateway.dev/tenant=$tenant" -o name) ||
+            die "Cannot read the objects of $tenant."
+    else
+        found=$(dedicated_cluster_objects "$tenant" | xargs kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$CONTEXT" \
+            get --ignore-not-found -o name) || die "Cannot read the objects of $tenant."
+        found="$found$(kube get namespace "$tenant" --ignore-not-found -o name)" || die "Cannot read namespace $tenant."
+    fi
+    printf '%s' "$found"
+}
+
+remove_tenant_keys() {
+    local removal
+    new_temp; removal=$TEMP_FILE
+    jq -n --arg api "$(tenant_key_name "$1" API)" --arg mock "$(tenant_key_name "$1" MOCK)" \
+        '{($api):null,($mock):null}' >"$removal"
+    save_env_file "$TENANT_ENV" "$removal"
+    TENANT_JSON=
+    mock_push_keys
+}
+
+# Removes whatever is left of a tenant without measuring anything, for a tenant-add or tenant-remove
+# that was interrupted.
+cleanup_partial_tenant() {
+    local tenant=$1
+    warn "$tenant is incomplete; removing what is left. This is not a measured offboarding."
+    if [[ "$CLUSTER" == shared ]]; then
+        kube -n "$NAMESPACE" delete configmaps,agentgatewaybackends,secrets -l "gateway.dev/tenant=$tenant" \
+            --ignore-not-found --wait=true >/dev/null
+        render_shared
+    else
+        remove_dedicated_tenant "$tenant"
+    fi
+    load_tenant_env
+    remove_tenant_keys "$tenant"
+    ok "$tenant is cleaned up and its keys are deleted"
+}
+
+# jq function over probe records sorted by start time: the last successful request, the start of the
+# first run of 25 consecutive 401 responses after it (the key is refused by authentication, not just
+# missing a route), and the number of leaks.
+REVOCATION_JQ='def revocation($started):
+  (map(select(.verdict == "verified") | .start_ms) | max) as $last |
+  ([range(0; length) as $i | select(.[$i].start_ms >= $started and ($last == null or .[$i].start_ms > $last) and
+      (.[$i:$i + 25] | length) == 25 and (.[$i:$i + 25] | all(.status == 401))) | .[$i].start_ms] | first) as $streak |
+  {last_success: $last, streak_start: $streak, leaks: (map(select(.verdict == "leak")) | length)};'
+
+current_records() {
+    local records
+    records=$(probe_records)
+    printf '%s
+' "$records" | jq -s 'map(select(type == "object")) | sort_by(.start_ms)'
+}
+
+# The shared gateway already has the Foundry route; a dedicated tenant gets its own copy of it.
+connect_tenant_foundry() {
+    if [[ "$CLUSTER" == dedicated ]] && foundry_configured; then
+        CLUSTER=dedicated TENANT=$1 /bin/bash "$ROOT/scripts/foundry.sh" gateway-configure-namespace >&2
+    fi
+}
+
+WATCH_PID=
+WATCH_FILE=
+stop_enforcement_watch() {
+    if [[ -n "$WATCH_PID" ]]; then kill "$WATCH_PID" 2>/dev/null || true; fi
+}
+
+# Polls the proxy's configuration in the background from before the tenant's objects are applied,
+# and writes the Kind node time at which the tenant's limit first appears. Both designs are
+# measured the same way, independently of how long the apply step itself takes.
+start_enforcement_watch() {
+    local tenant=$1 limit=$2
+    new_temp; WATCH_FILE=$TEMP_FILE
+    on_exit stop_enforcement_watch
+    (
+        set +e
+        deadline=$(( $(node_now_ms) + 300000 ))
+        while :; do
+            value=$( (enforced_limit "$tenant") 2>/dev/null )
+            if [[ "$value" == "$limit" ]]; then node_now_ms >"$WATCH_FILE"; exit 0; fi
+            [[ "$(node_now_ms)" -lt "$deadline" ]] || exit 1
+            sleep 0.5
+        done
+    ) &
+    WATCH_PID=$!
+}
+
+# The objects a new tenant adds, as recorded in its onboarding run.
+created_objects_json() {
+    local tenant=$1
+    if [[ "$CLUSTER" == shared ]]; then
+        jq -nc --arg t "$tenant" '["ConfigMap/" + $t + "-key", "Secret/mock-provider-" + $t, "AgentgatewayBackend/mock-" + $t]'
+    else
+        jq -nc --arg t "$tenant" --arg foundry "$(foundry_configured && printf yes || true)" '
+          ["Namespace/" + $t, "HelmRelease/agw-" + $t + " (controller Deployment, Service, ServiceAccount, Role, RoleBinding, 2 ClusterRoles, 2 ClusterRoleBindings, ServiceMonitor, PodMonitor)",
+           "GatewayClass/agw-" + $t, "AgentgatewayParameters/tenant-proxy", "Gateway/agentgateway-proxy (proxy Deployment and Service)",
+           "AgentgatewayPolicy/tenant-auth", "AgentgatewayPolicy/tenant-telemetry", "AgentgatewayPolicy/tenant-limits",
+           "HTTPRoute/mock-chat", "ConfigMap/tenant-key", "Secret/mock-provider", "AgentgatewayBackend/mock"]
+          + (if $foundry == "yes" then ["Secret/foundry-provider", "AgentgatewayBackend/foundry-model", "HTTPRoute/foundry-chat"] else [] end)'
+    fi
+}
+
+changed_objects_json() {
+    if [[ "$CLUSTER" == shared ]]; then printf '%s' '["AgentgatewayPolicy/tenant-limits","HTTPRoute/mock-chat"]'; else printf '[]'; fi
+}
+
+ONBOARDING_DONE=
+onboarding_hint() {
+    [[ -n "$ONBOARDING_DONE" ]] ||
+        warn "Onboarding did not finish. Rerun make tenant-add to complete it, or make tenant-remove CONFIRM=1 to clean up."
 }
 
 tenant_add() {
     validate_tenant "${TENANT:-}"
-    local tenant=$TENANT limit=${TOKENS_PER_MINUTE:-$DEFAULT_TOKENS_PER_MINUTE}
-    validate_limit "$limit"
+    local tenant=$TENANT limit=${TOKENS_PER_MINUTE:-}
+    [[ -z "$limit" ]] || validate_limit "$limit"
     verify_context
-    [[ "$CLUSTER" == shared ]] || die "Tenant commands for the dedicated cluster are not available yet."
     section "ADD TENANT | $KIND_CLUSTER | $tenant"
     if tenant_exists "$tenant"; then
-        info "$tenant already exists; reapplying its objects with the stored keys."
+        [[ -n "$limit" ]] || limit=$(stored_limit "$tenant")
+        info "$tenant already exists; reapplying its objects with the stored keys and a limit of $limit."
         ensure_keys "$tenant"
         mock_push_keys
-        apply_tenant_objects "$tenant" "$NAMESPACE" "$limit" "$tenant-key" "mock-provider-$tenant" "mock-$tenant"
-        render_shared
+        apply_design_tenant "$tenant" "$limit" true
+        connect_tenant_foundry "$tenant"
         ok "$tenant objects reapplied"
         return
     fi
-    local count existing
+    [[ -n "$limit" ]] || limit=$DEFAULT_TOKENS_PER_MINUTE
+    local count existing leftovers
+    leftovers=$(tenant_artifacts "$tenant")
+    [[ -z "$leftovers" ]] || die "$tenant has leftover objects from an interrupted run. Run make tenant-remove CLUSTER=$CLUSTER TENANT=$tenant CONFIRM=1 first."
     existing=$(tenant_list)
     count=$(printf '%s' "$existing" | grep -c . || true)
-    [[ "$count" -lt "$SHARED_TENANT_CEILING" ]] ||
-        die "The shared design holds at most $SHARED_TENANT_CEILING tenants: one rate-limit entry and one route rule each."
+    if [[ "$CLUSTER" == shared ]]; then
+        [[ "$count" -lt "$SHARED_TENANT_CEILING" ]] ||
+            die "The shared design holds at most $SHARED_TENANT_CEILING tenants: one rate-limit entry and one route rule each."
+    fi
+    on_exit onboarding_hint
     ensure_keys "$tenant"
     info 'Registering the tenant provider key at the mock (provider-side setup, not timed).'
     mock_push_keys
     new_run onboarding "$tenant"
-    local plan started applied usable_ms enforced_ms records elapsed deadline enforced now
+    local plan started written enforced_at published usable_at now deadline records state foundry_ms=
     new_temp; plan=$TEMP_FILE
     probe_plan "$tenant" "$plan"
     info "Starting the onboarding probe: $PROBE_RATE requests per second with $tenant's key."
     load_start "$RUN_ID" probe "$plan"
     load_first_record "$RUN_ID" probe
     started=$(node_now_ms)
-    apply_tenant_objects "$tenant" "$NAMESPACE" "$limit" "$tenant-key" "mock-provider-$tenant" "mock-$tenant"
-    render_shared
-    applied=$(node_now_ms)
-    info "Objects applied $((applied - started)) ms after the start; waiting until the tenant is usable and its limit is enforced."
-    usable_ms= enforced_ms=
+    start_enforcement_watch "$tenant" "$limit"
+    info 'Applying the tenant with its key inactive, so its limit is enforced before the key is accepted.'
+    apply_design_tenant "$tenant" "$limit" false
+    written=$(node_now_ms)
     deadline=$((started + 300000))
+    until [[ -s "$WATCH_FILE" ]]; do
+        [[ "$(node_now_ms)" -lt "$deadline" ]] || die "The proxy did not enforce $tenant's limit within 300 seconds."
+        sleep 0.5
+    done
+    enforced_at=$(cat "$WATCH_FILE")
+    wait "$WATCH_PID" 2>/dev/null || true
+    WATCH_PID=
+    # Taken before the change, because a request can succeed as soon as the proxy sees it.
+    published=$(node_now_ms)
+    set_key_active "$tenant" true
+    info "Limit enforced $((enforced_at - started)) ms after the start; key activated. Waiting for the first successful request."
+    deadline=$((published + 120000))
     while :; do
-        if [[ -z "$usable_ms" ]]; then
-            records=$(probe_records)
-            if grep -q '"verdict":"verified"' <<<"$records"; then usable_ms=done; fi
-        fi
-        if [[ -z "$enforced_ms" ]]; then
-            enforced=$(enforced_limit "$tenant")
-            if [[ "$enforced" == "$limit" ]]; then now=$(node_now_ms); enforced_ms=$((now - started)); fi
-        fi
-        [[ -z "$usable_ms" || -z "$enforced_ms" ]] || break
-        now=$(node_now_ms)
-        [[ "$now" -lt "$deadline" ]] || { warn 'Onboarding did not complete within 300 seconds.'; break; }
+        records=$(probe_records)
+        if grep -q '"verdict":"verified"' <<<"$records"; then break; fi
+        [[ "$(node_now_ms)" -lt "$deadline" ]] || die "$tenant was not usable within 120 seconds of activating its key."
         sleep 1
     done
     load_finish "$RUN_ID" probe "$RUN_DIR" >/dev/null
-    usable_ms=$(jq -s --argjson started "$started" \
-        '[.[] | select(.verdict == "verified")] | if length > 0 then (min_by(.start_ms).start_ms - $started) else null end' \
-        "$RUN_DIR/probes-probe.jsonl")
-    local fields
+    if [[ "$CLUSTER" == dedicated ]] && foundry_configured; then
+        connect_tenant_foundry "$tenant"
+        now=$(node_now_ms); foundry_ms=$((now - started))
+    fi
+    local fields mock_replicas
+    mock_replicas=$(kube -n "$MOCK_NAMESPACE" get deployment mock -o jsonpath='{.spec.replicas}')
     new_temp; fields=$TEMP_FILE
-    jq -n --arg tenant "$tenant" --argjson limit "$limit" --argjson started "$started" --argjson applied "$applied" \
-        --argjson usable "$usable_ms" --arg enforced "$enforced_ms" --arg run "$RUN_ID" \
-        --argjson count "$((count + 1))" --slurpfile summary "$RUN_DIR/k6-summary-probe.json" \
-        --arg created "$(shared_objects_for "$tenant")" '{
-      kind:"onboarding", name:$tenant, run_id:$run, tenant:$tenant, tokens_per_minute:$limit,
-      tenant_count_after:$count, clock:"kind-node",
-      started_ms:$started, objects_applied_after_ms:($applied - $started),
-      usable_after_ms:$usable, enforced_after_ms:(if $enforced == "" then null else ($enforced | tonumber) end),
-      objects_created:($created | split("\n")),
-      shared_objects_changed:["AgentgatewayPolicy/tenant-limits","HTTPRoute/mock-chat"],
-      probe:($summary[0].streams | to_entries[0].value)} |
-      .complete_after_ms = (if .usable_after_ms == null or .enforced_after_ms == null then null
-                            else ([.usable_after_ms, .enforced_after_ms] | max) end)' >"$fields"
+    jq -s --arg tenant "$tenant" --argjson limit "$limit" --argjson started "$started" --argjson written "$written" \
+        --argjson enforced "$enforced_at" --argjson published "$published" --arg foundry "$foundry_ms" \
+        --arg run "$RUN_ID" --argjson count "$count" --argjson rate "$PROBE_RATE" --arg design "$CLUSTER" \
+        --argjson replicas "$mock_replicas" --arg foundry_on "$(foundry_configured && printf yes || true)" \
+        --slurpfile summary "$RUN_DIR/k6-summary-probe.json" \
+        --argjson created "$(created_objects_json "$tenant")" --argjson changed "$(changed_objects_json)" '
+      ([.[] | select(.verdict == "verified") | .start_ms] | min) as $first |
+      {kind:"onboarding", name:$tenant, run_id:$run, tenant:$tenant, clock:"kind-node", started_ms:$started,
+       config:{design:$design, probe_rate:$rate, tokens_per_minute:$limit, tenant_count_before:$count,
+               mock_replicas:$replicas, foundry_connected:($foundry_on == "yes")},
+       objects_written_after_ms:($written - $started), enforced_after_ms:($enforced - $started),
+       key_activated_after_ms:($published - $started),
+       usable_after_ms:(if $first == null then null else $first - $started end),
+       usable_after_activation_ms:(if $first == null then null else $first - $published end),
+       foundry_connected_after_ms:(if $foundry == "" then null else ($foundry | tonumber) end),
+       leaks:(map(select(.verdict == "leak")) | length),
+       objects_created:$created, shared_objects_changed:$changed,
+       probe:($summary[0].streams | to_entries[0].value)} |
+      .complete_after_ms = (if .usable_after_ms == null then null else ([.usable_after_ms, .enforced_after_ms] | max) end)' \
+        "$RUN_DIR/probes-probe.jsonl" >"$fields"
     write_run_json "$fields"
     section 'ONBOARDING'
+    row 'Limit enforced after' "$(jq -r '.enforced_after_ms' "$RUN_DIR/run.json") ms (proxy configuration, key still inactive)"
+    row 'Key activated after' "$(jq -r '.key_activated_after_ms' "$RUN_DIR/run.json") ms"
     row 'Usable after' "$(jq -r '.usable_after_ms // "not reached"' "$RUN_DIR/run.json") ms (first successful probe)"
-    row 'Limit enforced after' "$(jq -r '.enforced_after_ms // "not reached"' "$RUN_DIR/run.json") ms (proxy configuration)"
-    row 'Objects created' "3 (key ConfigMap, provider Secret, backend)"
-    row 'Shared objects changed' "2 (tenant-limits, mock-chat), each shared by $((count + 1)) tenants"
+    if [[ -n "$foundry_ms" ]]; then row 'Foundry connected after' "$foundry_ms ms (own copy of the Azure key)"; fi
+    row 'Objects created' "$(jq -r '.objects_created | length' "$RUN_DIR/run.json")"
+    if [[ "$CLUSTER" == shared ]]; then
+        row 'Shared objects changed' "2 (tenant-limits, mock-chat), each shared by $((count + 1)) tenants"
+    else
+        row 'Shared objects changed' "none"
+    fi
     row 'Run record' "${RUN_DIR#$ROOT/}"
-    jq -e '.complete_after_ms != null' "$RUN_DIR/run.json" >/dev/null || die "$tenant did not become usable and enforced."
+    jq -e '.leaks == 0' "$RUN_DIR/run.json" >/dev/null || die "Probe responses reached another tenant's provider key."
+    jq -e '.complete_after_ms != null' "$RUN_DIR/run.json" >/dev/null || die "$tenant did not become usable."
+    ONBOARDING_DONE=1
     ok "$tenant is onboarded"
+}
+
+# True once nothing that held the tenant's settings remains and the proxy no longer enforces it.
+tenant_cleaned() {
+    local tenant=$1 objects route
+    if [[ "$CLUSTER" == dedicated ]]; then dedicated_cleaned "$tenant"; return; fi
+    local enforced
+    enforced=$( (enforced_limit "$tenant") 2>/dev/null ) || return 1
+    [[ -z "$enforced" ]] || return 1
+    objects=$(kube -n "$NAMESPACE" get configmap,agentgatewaybackend,secret -l "gateway.dev/tenant=$tenant" -o name) || return 1
+    [[ -z "$objects" ]] || return 1
+    route=$(kube -n "$NAMESPACE" get httproute mock-chat --ignore-not-found -o json) || return 1
+    ! grep -q "\"$tenant\"" <<<"$route"
 }
 
 tenant_remove() {
     validate_tenant "${TENANT:-}"
     local tenant=$TENANT
     verify_context
-    [[ "$CLUSTER" == shared ]] || die "Tenant commands for the dedicated cluster are not available yet."
     [[ "${CONFIRM:-}" == 1 ]] || die "This removes $tenant and its keys. Rerun with CONFIRM=1."
-    tenant_exists "$tenant" || die "$tenant does not exist in $KIND_CLUSTER."
     section "REMOVE TENANT | $KIND_CLUSTER | $tenant"
     load_tenant_env
+    local key_state
+    if tenant_exists "$tenant"; then
+        key_state=$(kube -n "$(tenant_namespace "$tenant")" get configmap "$(key_configmap "$tenant")" --ignore-not-found \
+            -o jsonpath='{.metadata.labels.gateway\.dev/key-active}') || die "Cannot read $tenant."
+    fi
+    if ! tenant_exists "$tenant" || [[ "${key_state:-}" != true ]]; then
+        if [[ -n "$(tenant_artifacts "$tenant")" ]]; then cleanup_partial_tenant "$tenant"; return; fi
+        die "$tenant does not exist in $KIND_CLUSTER."
+    fi
+    duplicate_hash_check "$tenant"
+    local existing count limit
+    existing=$(tenant_list)
+    count=$(printf '%s' "$existing" | grep -c . || true)
+    limit=$(stored_limit "$tenant")
     new_run offboarding "$tenant"
-    local plan started records now deadline revoked cleaned_ms healthy
+    local plan started state revoked_seen= cleaned_ms= now deadline healthy
     new_temp; plan=$TEMP_FILE
     probe_plan "$tenant" "$plan"
     load_start "$RUN_ID" probe "$plan"
     load_first_record "$RUN_ID" probe
     deadline=$(( $(node_now_ms) + 120000 ))
     while :; do
-        healthy=$(probe_records | jq -s '[.[-10:][] | select(.verdict == "verified")] | length')
+        healthy=$(current_records | jq '[.[-10:][] | select(.verdict == "verified")] | length')
         [[ "$healthy" -lt 10 ]] || break
         [[ "$(node_now_ms)" -lt "$deadline" ]] || die "$tenant was not healthy before removal; nothing was changed."
         sleep 1
     done
     started=$(node_now_ms)
-    kube -n "$NAMESPACE" delete configmap "$tenant-key" --wait=true >/dev/null
-    render_shared
-    kube -n "$NAMESPACE" delete agentgatewaybackend "mock-$tenant" --ignore-not-found >/dev/null
-    kube -n "$NAMESPACE" delete secret "mock-provider-$tenant" --ignore-not-found >/dev/null
-    revoked= cleaned_ms=
-    deadline=$((started + 300000))
+    info 'Deactivating the key first; the rest is removed only after authentication refuses it.'
+    set_key_active "$tenant" false
+    deadline=$((started + 120000))
     while :; do
-        if [[ -z "$revoked" ]]; then
-            revoked=$(probe_records | jq -s --argjson started "$started" '
-              [.[] | select(.start_ms >= $started)] as $after |
-              if ($after | length) >= 25 and ($after[-25:] | all(.verdict != "verified")) then "yes" else empty end')
-        fi
-        if [[ -z "$cleaned_ms" && -z "$(enforced_limit "$tenant")" ]] &&
-            ! kube -n "$NAMESPACE" get configmap,agentgatewaybackend,secret -l "gateway.dev/tenant=$tenant" -o name | grep -q . &&
-            ! kube -n "$NAMESPACE" get httproute mock-chat -o json --ignore-not-found 2>/dev/null | grep -q "\"$tenant\""; then
-            now=$(node_now_ms); cleaned_ms=$((now - started))
-        fi
-        [[ -z "$revoked" || -z "$cleaned_ms" ]] || break
-        [[ "$(node_now_ms)" -lt "$deadline" ]] || { warn 'Offboarding did not complete within 300 seconds.'; break; }
+        state=$(current_records | jq -c --argjson started "$started" "$REVOCATION_JQ revocation(\$started)")
+        [[ "$(jq '.leaks' <<<"$state")" -eq 0 ]] || die "Probe responses reached another tenant's provider key; stopping."
+        if [[ "$(jq '.streak_start' <<<"$state")" != null ]]; then revoked_seen=$(node_now_ms); break; fi
+        [[ "$(node_now_ms)" -lt "$deadline" ]] ||
+            die "Authentication still accepts $tenant's key after 120 seconds. The key is inactive and nothing else was removed."
+        sleep 1
+    done
+    if [[ "$CLUSTER" == shared ]]; then
+        kube -n "$NAMESPACE" delete configmap "$tenant-key" --wait=true >/dev/null
+        render_shared
+        kube -n "$NAMESPACE" delete agentgatewaybackend "mock-$tenant" --ignore-not-found >/dev/null
+        kube -n "$NAMESPACE" delete secret "mock-provider-$tenant" --ignore-not-found >/dev/null
+    else
+        remove_dedicated_tenant "$tenant"
+    fi
+    deadline=$((started + 600000))
+    while :; do
+        if tenant_cleaned "$tenant"; then now=$(node_now_ms); cleaned_ms=$((now - started)); break; fi
+        [[ "$(node_now_ms)" -lt "$deadline" ]] || { warn 'Cleanup did not finish within 600 seconds.'; break; }
         sleep 1
     done
     load_finish "$RUN_ID" probe "$RUN_DIR" >/dev/null
-    records="$RUN_DIR/probes-probe.jsonl"
-    local fields removal
+    local fields mock_replicas
+    mock_replicas=$(kube -n "$MOCK_NAMESPACE" get deployment mock -o jsonpath='{.spec.replicas}')
     new_temp; fields=$TEMP_FILE
-    jq -s --arg tenant "$tenant" --argjson started "$started" --arg cleaned "$cleaned_ms" --arg run "$RUN_ID" '
-      . as $all |
-      ([$all[] | select(.verdict == "verified")] | if length > 0 then max_by(.start_ms).start_ms else null end) as $last |
-      ([range(0; ($all | length)) as $i | select($all[$i].start_ms >= $started and
-         ($all[$i:$i + 25] | length) == 25 and ($all[$i:$i + 25] | all(.verdict != "verified"))) | $all[$i].start_ms]
-       | first // null) as $failed |
+    jq -s --arg tenant "$tenant" --argjson started "$started" --arg cleaned "$cleaned_ms" --arg run "$RUN_ID" \
+        --argjson seen "$revoked_seen" --argjson count "$count" --argjson limit "$limit" --argjson rate "$PROBE_RATE" \
+        --arg design "$CLUSTER" --argjson replicas "$mock_replicas" \
+        --argjson deleted "$(created_objects_json "$tenant")" --argjson changed "$(changed_objects_json)" "$REVOCATION_JQ"'
+      sort_by(.start_ms) | revocation($started) as $r |
+      ([.[] | select($r.streak_start != null and .start_ms > $r.streak_start and .verdict == "verified")] | length) as $resumed |
       {kind:"offboarding", name:$tenant, run_id:$run, tenant:$tenant, clock:"kind-node", started_ms:$started,
-       revoked_between_ms:[(if $last == null then null else $last - $started end),
-                           (if $failed == null then null else $failed - $started end)],
+       config:{design:$design, probe_rate:$rate, tokens_per_minute:$limit, tenant_count_before:$count,
+               mock_replicas:$replicas},
+       revoked_between_ms:[(if $r.last_success == null then null else $r.last_success - $started end),
+                           (if $r.streak_start == null then null else $r.streak_start - $started end)],
+       revocation_observed_after_ms:($seen - $started),
+       success_after_revocation:$resumed, leaks:$r.leaks,
        cleaned_after_ms:(if $cleaned == "" then null else ($cleaned | tonumber) end),
-       objects_deleted:["ConfigMap/" + $tenant + "-key","AgentgatewayBackend/mock-" + $tenant,"Secret/mock-provider-" + $tenant],
-       shared_objects_changed:["AgentgatewayPolicy/tenant-limits","HTTPRoute/mock-chat"]}' "$records" >"$fields"
+       objects_deleted:$deleted, shared_objects_changed:$changed}' "$RUN_DIR/probes-probe.jsonl" >"$fields"
     write_run_json "$fields"
-    new_temp; removal=$TEMP_FILE
-    jq -n --arg api "$(tenant_key_name "$tenant" API)" --arg mock "$(tenant_key_name "$tenant" MOCK)" \
-        '{($api):null,($mock):null}' >"$removal"
-    save_env_file "$TENANT_ENV" "$removal"
-    TENANT_JSON=
-    mock_push_keys
+    remove_tenant_keys "$tenant"
     section 'OFFBOARDING'
-    row 'Access revoked between' "$(jq -r '.revoked_between_ms | map(. // "?") | join(" and ")' "$RUN_DIR/run.json") ms after removal started"
+    row 'Access revoked between' "$(jq -r '.revoked_between_ms | map(. // "?") | join(" and ")' "$RUN_DIR/run.json") ms after deactivation (last success, then 25 refusals by authentication)"
     row 'Cleaned after' "$(jq -r '.cleaned_after_ms // "not reached"' "$RUN_DIR/run.json") ms"
     row 'Run record' "${RUN_DIR#$ROOT/}"
-    jq -e '.revoked_between_ms[1] != null and .cleaned_after_ms != null' "$RUN_DIR/run.json" >/dev/null ||
-        die "$tenant was not fully revoked and cleaned."
+    jq -e '.leaks == 0 and .success_after_revocation == 0 and .revoked_between_ms[1] != null and
+           (.revoked_between_ms[0] == null or .revoked_between_ms[0] <= .revoked_between_ms[1]) and
+           .cleaned_after_ms != null' "$RUN_DIR/run.json" >/dev/null ||
+        die "$tenant was not cleanly revoked and removed; see the run record."
     ok "$tenant is removed and its keys are deleted"
 }
 
@@ -315,7 +627,6 @@ tenant_limit() {
     local target=${TENANT:-} limit=${TOKENS_PER_MINUTE:-} tenants tenant
     validate_limit "$limit"
     verify_context
-    [[ "$CLUSTER" == shared ]] || die "Tenant commands for the dedicated cluster are not available yet."
     if [[ "$target" == all ]]; then
         tenants=$(tenant_list)
     else
@@ -325,9 +636,17 @@ tenant_limit() {
     fi
     [[ -n "$tenants" ]] || die "No tenants exist in $KIND_CLUSTER."
     for tenant in $tenants; do
-        kube -n "$NAMESPACE" annotate configmap "$tenant-key" "gateway.dev/tokens-per-minute=$limit" --overwrite >/dev/null
+        if [[ "$CLUSTER" == shared ]]; then
+            kube -n "$NAMESPACE" annotate configmap "$tenant-key" "gateway.dev/tokens-per-minute=$limit" --overwrite >/dev/null
+        else
+            kube -n "$tenant" annotate configmap tenant-key "gateway.dev/tokens-per-minute=$limit" --overwrite >/dev/null
+        fi
     done
-    render_shared
+    if [[ "$CLUSTER" == shared ]]; then
+        render_shared
+    else
+        for tenant in $tenants; do render_tenant "$tenant"; done
+    fi
     ok "Limit set to $limit tokens per minute for: $(printf '%s ' $tenants)"
 }
 
@@ -335,26 +654,43 @@ tenants_show() {
     verify_context
     section "TENANTS | $KIND_CLUSTER"
     local configmaps
-    configmaps=$(kube -n "$NAMESPACE" get configmaps -l gateway.dev/component=tenant-key -o json)
+    if [[ "$CLUSTER" == shared ]]; then
+        configmaps=$(kube -n "$NAMESPACE" get configmaps -l gateway.dev/component=tenant-key -o json)
+    else
+        configmaps=$(kube get configmaps -A -l gateway.dev/component=tenant-key -o json)
+    fi
     if [[ "$(jq '[.items[] | select(.metadata.labels["gateway.dev/tenant"] // "" | test("^tenant-[0-9]{2}$"))] | length' <<<"$configmaps")" -eq 0 ]]; then
-        info 'No tenants yet. Add one: make tenant-add CLUSTER=shared TENANT=tenant-01'
+        info "No tenants yet. Add one: make tenant-add CLUSTER=$CLUSTER TENANT=tenant-01"
         return
     fi
     jq -r '.items[] | select(.metadata.labels["gateway.dev/tenant"] // "" | test("^tenant-[0-9]{2}$")) |
-      [.metadata.labels["gateway.dev/tenant"], .metadata.annotations["gateway.dev/tokens-per-minute"]] | @tsv' <<<"$configmaps" |
-        sort | while IFS=$'\t' read -r tenant limit; do row "$tenant" "$limit tokens per minute"; done
+      [.metadata.labels["gateway.dev/tenant"], .metadata.annotations["gateway.dev/tokens-per-minute"],
+       (if .metadata.labels["gateway.dev/key-active"] == "true" then "key active" else "key inactive" end)] | @tsv' <<<"$configmaps" |
+        sort | while IFS=$'\t' read -r tenant limit state; do row "$tenant" "$limit tokens per minute, $state"; done
 }
 
 tenant_objects() {
     validate_tenant "${TENANT:-}"
-    local tenant=$TENANT count foundry= existing
+    local tenant=$TENANT count foundry= existing found
     verify_context
-    [[ "$CLUSTER" == shared ]] || die "Tenant commands for the dedicated cluster are not available yet."
     tenant_exists "$tenant" || die "$tenant does not exist in $KIND_CLUSTER."
     existing=$(tenant_list)
     count=$(printf '%s' "$existing" | grep -c . || true)
-    if kube -n "$NAMESPACE" get secret foundry-provider --ignore-not-found -o name | grep -q .; then foundry=yes; fi
+    found=$(kube -n "$(tenant_namespace "$tenant")" get secret foundry-provider --ignore-not-found -o name)
+    [[ -z "$found" ]] || foundry=yes
     local objects
+    if [[ "$CLUSTER" == dedicated ]]; then
+        objects=$(jq -n --arg t "$tenant" --argjson n "$count" --arg foundry "$foundry" '[
+          {object:("Namespace " + $t), holds:"every namespaced object below", shared_by:1},
+          {object:("Helm release agw-" + $t + " (controller Deployment agw-" + $t + "-agentgateway)"), holds:"the tenant own controller", shared_by:1},
+          {object:("GatewayClass agw-" + $t), holds:"cluster-wide class owned by the tenant controller", shared_by:1},
+          {object:("ClusterRoles agentgateway-" + $t + " and agentgateway-" + $t + "-deployer"), holds:"controller permissions, including reading Secrets in every namespace", shared_by:1},
+          {object:("Gateway, AgentgatewayParameters, and proxy Deployment " + $t + "/agentgateway-proxy"), holds:"the proxy serving the tenant", shared_by:1},
+          {object:($t + "/tenant-auth, tenant-telemetry, tenant-limits"), holds:"authentication, telemetry, token limit (one conditional entry)", shared_by:1},
+          {object:($t + "/mock-chat, tenant-key, mock-provider, mock"), holds:"route, key hash and limit, provider key, backend", shared_by:1}]
+          + (if $foundry == "yes" then [{object:("Secret, backend, and route for Foundry in " + $t), holds:("one of " + ($n|tostring) + " Azure key copies"), shared_by:1}] else [] end)
+          + [{object:"CRDs (one version), Kind node, mock upstream, Foundry deployment", holds:"cluster-wide and upstream", shared_by:$n}]')
+    else
     objects=$(jq -n --arg tenant "$tenant" --argjson n "$count" --arg foundry "$foundry" '[
       {object:("ConfigMap agentgateway-system/" + $tenant + "-key"), holds:"gateway key hash, tenant name, limit", shared_by:1},
       {object:("Secret agentgateway-system/mock-provider-" + $tenant), holds:"provider key", shared_by:1},
@@ -368,6 +704,7 @@ tenant_objects() {
       {object:"Deployment agentgateway-system/agentgateway", holds:"the controller", shared_by:$n}]
       + (if $foundry == "yes" then [{object:"Secret, backend, and route for Foundry in agentgateway-system", holds:"one Azure key copy", shared_by:$n}] else [] end)
       + [{object:"CRDs, Kind node, mock upstream", holds:"cluster-wide", shared_by:$n}]')
+    fi
     if [[ "${FORMAT:-}" == json ]]; then printf '%s\n' "$objects"; return; fi
     section "OBJECTS HOLDING $tenant | $KIND_CLUSTER"
     jq -r '.[] | [.object, "shared by \(.shared_by) | \(.holds)"] | @tsv' <<<"$objects" |

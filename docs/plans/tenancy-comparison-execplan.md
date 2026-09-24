@@ -30,8 +30,9 @@ Two words have fixed meanings in this plan, in the code, and in every document i
 - [x] (2026-09-24 13:10Z) Milestone 2: prototypes P1 to P6 all promoted (none needed its fallback); the minimal load runner (scripts/load.sh, deploy/k6/chat.js), the per-tenant install files, mock_push_keys, and the tenant dashboard panels are in place.
 - [x] (2026-09-24 13:35Z) Milestone 2 reviews: the rubber-duck review found 5 blocking and 4 non-blocking issues and the security review 1 low issue, all fixed. Recorded in FINDINGS.md.
 - [x] (2026-09-24 13:55Z) Milestone 3: shared-cluster tenants (tenant-01 to tenant-03) with measured onboarding and offboarding, per-tenant mock provider keys, the Foundry route, and retirement of the old cluster (`make legacy-down CONFIRM=1` after a real Foundry prompt succeeded through the shared gateway). Development runs made with uncommitted code were deleted; measured runs come from committed code in later milestones.
-- [ ] Milestone 3 reviews: rubber-duck and security review of the Milestone 3 commit, findings recorded in FINDINGS.md.
-- [ ] Milestone 4: dedicated-cluster tenants and the Foundry route in each tenant gateway.
+- [x] (2026-09-24 14:35Z) Milestone 3 reviews: the rubber-duck review found 5 blocking and 4 non-blocking issues and the security review 1 medium issue, all fixed. Because Milestone 4 had already changed the same script, the fixes and Milestone 4 are in one commit. Recorded in FINDINGS.md.
+- [x] (2026-09-24 14:35Z) Milestone 4: dedicated-cluster tenants (tenant-01 to tenant-03), each with its own controller, GatewayClass, proxy, policies, mock provider key, and Foundry connection; measured onboarding and offboarding in both designs with the staged key lifecycle; bystander probes for tenant-01 and tenant-02 saw no failure while tenant-03 was removed.
+- [ ] Milestone 4 reviews: rubber-duck and security review of the Milestone 4 commit, findings recorded in FINDINGS.md.
 - [ ] Milestone 5: prompts, load, calibration, and the separation, latency, rollout, and Foundry smoke scenarios.
 - [ ] Milestone 6: the ten deliberate failure modes with automatic restore.
 - [ ] Milestone 7: the scale sweep and onboarding measurements.
@@ -87,6 +88,8 @@ These facts were found while designing the plan, before any implementation. Each
 - Observation: k6 v2.3.0 (2026-09-21) is the latest stable release. Its Prometheus remote-write output keeps one aggregate per time series for the whole run, so the exported percentile values are cumulative, not per push interval. A window's p95 cannot be recovered by subtracting cumulative values.
   Evidence: grafana/k6 v2.3.0 internal/output/prometheusrw/remotewrite/remotewrite.go (the per-series sink is retained and samples are added to it) and config.go (K6_PROMETHEUS_RW_TREND_STATS, K6_PROMETHEUS_RW_PUSH_INTERVAL, K6_PROMETHEUS_RW_STALE_MARKERS, and the native-histogram setting K6_PROMETHEUS_RW_TREND_AS_NATIVE_HISTOGRAM). k6 also timestamps HTTP metrics when a request completes or times out, not when it starts, so a failure can appear seconds after it began.
 
+- Observation (Milestone 4, development runs): with the staged lifecycle, shared onboarding enforced the limit after about 1.5 seconds and was usable after about 1.7 seconds; dedicated onboarding enforced after about 9.4 seconds, was usable after about 10.3 seconds, and had its own Foundry connection after about 19 seconds. Offboarding revoked access within about 0.1 to 0.4 seconds of deactivating the key in both designs, and cleaned up after about 7.5 seconds (shared) and 12.5 seconds (dedicated, which deletes a Helm release, a GatewayClass, cluster roles, and a namespace). Probes for tenant-01 and tenant-02 in the dedicated cluster recorded 165 successful requests each and no failure while tenant-03 was removed.
+
 - Observation (Milestone 3): onboarding in the shared cluster took about 1.0 to 1.9 seconds until the first successful probe and 1.7 to 3.0 seconds until the proxy's configuration showed the tenant's limit; offboarding revoked access within about 0.1 to 0.3 seconds of deleting the key ConfigMap and finished cleaning in 2.4 to 2.9 seconds. These are development runs, not results.
 
 - Observation (Milestone 3): with a single conditional entry, the proxy's configuration dump stores `localRateLimit` as one object rather than a one-element list; the read-back handles both.
@@ -141,6 +144,18 @@ These facts were found while designing the plan, before any implementation. Each
 
 - Decision (Milestone 1): pinned K6_IMAGE=grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34, PYTHON_IMAGE=python:3.13-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0 (both multi-architecture index digests), and KUBE_PROMETHEUS_STACK_VERSION=91.5.1 (Prometheus v3.14.0, operator v0.94.1).
   Rationale: latest stable releases on 2026-09-24, resolved with `docker buildx imagetools inspect` and `helm show chart`.
+  Date/Author: 2026-09-24, Copilot.
+
+- Decision (Milestone 3 review): a key takes part in authentication only while its ConfigMap has `gateway.dev/key-active: "true"` (tenant-auth selects on it). Onboarding applies a tenant with its key inactive, waits until the proxy's own configuration shows the limit, and then activates the key. Offboarding deactivates the key, waits for 25 consecutive 401 responses after the last success, and only then removes the limit, route, backend, and the rest. A leak during either is a hard failure, and removal refuses to start if the key's hash is stored for another tenant.
+  Rationale: the review showed a key could be accepted before its limit existed, and that "not verified" counted leaks, 404s, and 429s as revocation. Authentication refusal is the one signal that means the key no longer works in either design.
+  Date/Author: 2026-09-24, Copilot.
+
+- Decision (Milestone 3 review): run provenance is captured when a run starts and compared at the end; a change marks the run `inputs_changed_during_run` and not committed. Every run record carries a `config` object (design, probe rate, limits, tenant count, mock replicas, and more) hashed into `config_fingerprint`.
+  Rationale: provenance taken at the end could describe code the run did not execute, and comparisons need to know the conditions, not only the code.
+  Date/Author: 2026-09-24, Copilot.
+
+- Decision (Milestone 4): onboarding measures enforcement with a background watcher that polls the proxy's configuration from the start, in both designs, and a dedicated tenant's own Foundry connection is set up after the measured window and reported separately.
+  Rationale: checking enforcement only after the apply step returned measured the apply step's own waits, which are much longer in the dedicated design.
   Date/Author: 2026-09-24, Copilot.
 
 - Decision (Milestone 2): the load runner stops k6 early through k6's REST API (`PATCH /v1/status` with `stopped: true`), reached from the Kind node at the pod's address on port 6565, because deleting the Job would also delete the logs that hold the summary and probe records.

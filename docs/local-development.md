@@ -150,6 +150,15 @@ Keys live in `.env.tenants` as `<CLUSTER>_<TENANT>_API_KEY` (the gateway key) an
 the gateway key. The mock provider key is registered at the mock before a tenant is added, the way
 a tenant would bring a key its provider already accepts.
 
+In the dedicated cluster, every tenant is a namespace `tenant-NN` holding a complete agentgateway:
+its own Helm release `agw-tenant-NN` (controller, GatewayClass `agw-tenant-NN`, and controller name
+`agentgateway.dev/tenant-NN`, allowed to write only in its namespace), its own Gateway and proxy,
+`tenant-auth`, `tenant-telemetry`, `tenant-limits` (the same conditional form with one entry),
+HTTPRoute `mock-chat`, key ConfigMap `tenant-key`, Secret `mock-provider`, AgentgatewayBackend `mock`,
+and its own copy of the Foundry Secret, backend, and route. The CRDs, the Kind node, the mock, and the
+Foundry deployment are still shared. Each tenant controller's ClusterRole can read Secrets in every
+namespace; that is what the chart grants, and this project records it rather than changing it.
+
 In the shared cluster, every tenant is a set of entries in `agentgateway-system`: a key ConfigMap
 `tenant-NN-key` (hash, tenant name, and the limit annotation `gateway.dev/tokens-per-minute`), a
 provider Secret `mock-provider-tenant-NN`, and an AgentgatewayBackend `mock-tenant-NN`. Two objects
@@ -159,13 +168,25 @@ conditional token limit per tenant) and HTTPRoute `mock-chat` (one rule per tena
 key authentication, so a client cannot choose another tenant's route or key. Both lists hold at most
 16 entries, so the shared design as built holds at most 16 tenants; `tenant-add` refuses a 17th.
 
+A key takes part in authentication only while its ConfigMap has `gateway.dev/key-active: "true"`.
+`tenant-add` applies everything with the key inactive, waits until the proxy's own configuration
+shows the tenant's limit, and only then activates the key, so a tenant is never accepted without its
+limit. `tenant-remove` deactivates the key first and removes the rest only after authentication has
+refused it 25 times in a row. It refuses to start if the key's hash is also stored for another tenant.
+Rerunning `tenant-add` for an existing tenant reapplies its objects and keeps its stored limit unless
+`TOKENS_PER_MINUTE` is given. If an add or remove was interrupted, `tenant-remove CONFIRM=1` removes
+whatever is left without measuring it.
+
 `tenant-add` and `tenant-remove` measure themselves. A k6 probe sends five requests per second with
-the tenant's key from inside the cluster before anything changes. Onboarding records when the first
-probe succeeded ("usable") and when the proxy's own configuration shows the tenant's limit
-("enforced"). Offboarding waits for a healthy baseline, then records the interval in which access was
-revoked (from the last successful probe to the first of 25 consecutive refusals) and when every
-object holding the tenant is gone ("cleaned"). Times come from the Kind node's clock, the same clock
-that stamps the probe records. Each measurement writes a run record under `results/<cluster>/`.
+the tenant's key from inside the cluster before anything changes. Onboarding records when the proxy
+enforced the limit, when the key was activated, and when the first probe succeeded ("usable"); for a
+dedicated tenant it also records when its own Foundry connection was ready. Offboarding waits for a
+healthy baseline, then records the interval in which access was revoked (from the last successful
+probe to the first of 25 consecutive 401 responses) and when every object holding the tenant is gone
+("cleaned"). A probe response served with another tenant's provider key fails the command. Times come
+from the Kind node's clock, the same clock that stamps the probe records. Each measurement writes a
+run record under `results/<cluster>/` with its provenance (captured when the run starts and checked
+again at the end) and a configuration fingerprint.
 
 `make gateway-config` reads what the proxy enforces through the Kind node, never through a host
 port-forward. `make tenant-objects` lists every object that holds a tenant's settings and how many

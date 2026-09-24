@@ -105,3 +105,30 @@ Reviewed commit `05add5d`. Fixes are in the commit "Fix the Milestone 2 review f
 | # | Severity | Finding | Resolution | Status |
 | --- | --- | --- | --- | --- |
 | 1 | LOW | Load Secrets holding raw tenant keys had no owner or expiry, so a runner killed before its cleanup could leave them in the cluster indefinitely, and cleanup stopped at the first failed deletion. | Jobs are created suspended with a deadline, their key Secret and plan ConfigMap are owned by the Job (Kubernetes deletes them with it, verified in 1 second), and then the Job starts. Cleanup attempts every pending run and reports failures at the end. | Fixed |
+
+
+## Milestone 3: tenants in the shared cluster
+
+Reviewed commit `f489419`. Milestone 4 had already changed the same script when the reviews
+arrived, so the fixes are in the Milestone 4 commit, "Add a complete agentgateway per tenant in the
+dedicated cluster".
+
+### Rubber-duck review (9 findings)
+
+| # | Severity | Finding | Resolution | Status |
+| --- | --- | --- | --- | --- |
+| 1 | Blocking | The key ConfigMap made a tenant's key valid before its limit and route were installed, so for a moment (or indefinitely after a failure) the key worked without a limit. | Keys take part in authentication only while `gateway.dev/key-active` is `"true"`. Onboarding applies everything with the key inactive, waits until the proxy shows the limit, then activates the key. | Fixed |
+| 2 | Blocking | Revocation counted every non-verified response, including leaks, 404s, 429s, and censored requests, and could pair a late success with an early failure run, producing an inverted interval. | Revocation requires 25 consecutive 401 responses after the last success; a success after them, an inverted interval, or any leak fails the command. | Fixed |
+| 3 | Blocking | An interrupted add or remove left objects or keys that `tenant-remove` then refused to clean because the key ConfigMap was gone. | `tenant-remove` recognizes leftovers (objects, namespace, GatewayClass, cluster roles, keys) and removes them as an unmeasured cleanup; `tenant-add` refuses to start over leftovers and prints how to recover. | Fixed |
+| 4 | Blocking | A failed read could look like "cleaned", because an empty result from a failed command substitution passed the check. | Each read is captured and checked; only successful reads showing absence count. | Fixed |
+| 5 | Blocking | Rerunning `tenant-add` for an existing tenant reset its limit to the default. | The stored limit is kept unless `TOKENS_PER_MINUTE` is given. | Fixed |
+| 6 | Non-blocking | Enforcement was first checked only after the apply step and its status waits returned. | A background watcher polls the proxy's configuration from the start, in both designs. | Fixed |
+| 7 | Non-blocking | Provenance was captured when the run record was written, not when the run started. | Captured at the start and compared at the end; a change marks the run as not using committed inputs. | Fixed |
+| 8 | Non-blocking | Run records had no configuration fingerprint, and offboarding omitted the tenant count and limit. | Every record has a `config` object and `config_fingerprint`. | Fixed |
+| 9 | Non-blocking | Stored limit annotations were checked only for digits, bypassing the 1,000,000,000 ceiling. | `render_shared` applies the same bounds and names the offending ConfigMap. | Fixed |
+
+### Security review (1 finding)
+
+| # | Severity | Finding | Resolution | Status |
+| --- | --- | --- | --- | --- |
+| 1 | MEDIUM | Offboarding treated cross-tenant access (HTTP 200 marked `leak`) as revocation, so with a duplicate key hash a removed tenant's key could keep working as another tenant while the command reported success. | Removal refuses to start if the key's hash is stored for another tenant, requires authentication refusals (401) as revocation evidence, and fails on any leak. | Fixed |

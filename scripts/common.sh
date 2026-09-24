@@ -439,14 +439,16 @@ tenant_list() {
     fi
 }
 
+# Tenants whose key is active on the gateway in the given namespace.
 tenants_served_by() {
     local found
     if [[ "$CLUSTER" == shared ]]; then
-        tenant_list
+        kube -n "$NAMESPACE" get configmaps -l gateway.dev/component=tenant-key,gateway.dev/key-active=true -o json |
+            jq -r '.items[].metadata.labels["gateway.dev/tenant"] // empty | select(test("^tenant-[0-9]{2}$"))' | sort
     else
-        found=$(kube -n "$1" get configmap tenant-key --ignore-not-found -o name) ||
-            die "Cannot read the tenant key in $1."
-        if [[ -n "$found" ]]; then printf '%s\n' "$1"; fi
+        found=$(kube -n "$1" get configmap tenant-key --ignore-not-found \
+            -o jsonpath='{.metadata.labels.gateway\.dev/key-active}') || die "Cannot read the tenant key in $1."
+        if [[ "$found" == true ]]; then printf '%s\n' "$1"; fi
     fi
 }
 

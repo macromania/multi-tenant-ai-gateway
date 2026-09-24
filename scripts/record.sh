@@ -9,6 +9,7 @@ RESULTS="$ROOT/results"
 INPUT_PATHS=(Makefile scripts deploy versions.env ports.env)
 RUN_ID=
 RUN_DIR=
+RUN_PROVENANCE=
 
 # SHA-256 over the path and content hash of every tracked or untracked, non-ignored input file.
 input_fingerprint() {
@@ -44,6 +45,9 @@ new_run() {
     RUN_DIR="$RESULTS/$CLUSTER/$stamp-$kind-$name"
     [[ ! -e "$RUN_DIR" ]] || die "Run directory already exists: $RUN_DIR"
     mkdir -p -- "$RUN_DIR"
+    # Provenance describes the code at the start of the run; write_run_json checks it again.
+    new_temp; RUN_PROVENANCE=$TEMP_FILE
+    provenance_json >"$RUN_PROVENANCE"
 }
 
 provenance_json() {
@@ -58,10 +62,25 @@ provenance_json() {
                  kube_prometheus_stack: $prometheus_stack, gateway_api: $gateway_api}}'
 }
 
-# write_run_json <json file with run-specific fields>: merges provenance and writes run.json.
+# write_run_json <json file with run-specific fields>: merges the provenance captured when the run
+# started and writes run.json. If the implementation inputs changed during the run, the record says
+# so and does not claim they were committed. A "config" object in the fields (workload, tenant count,
+# limits, mock settings, windows) is hashed into config_fingerprint, which the report uses to decide
+# which runs are comparable.
 write_run_json() {
-    local provenance
-    new_temp; provenance=$TEMP_FILE
-    provenance_json >"$provenance"
-    jq -s '.[0] + .[1]' "$provenance" "$1" >"$RUN_DIR/run.json"
+    local now
+    new_temp; now=$TEMP_FILE
+    provenance_json >"$now"
+    jq -s '
+      .[0] as $start | .[1] as $end | .[2] as $fields |
+      $start + {inputs_changed_during_run: ($start.input_fingerprint != $end.input_fingerprint or
+                                            $start.commit != $end.commit)} |
+      if .inputs_changed_during_run then .inputs_committed = false else . end |
+      . + $fields' "$RUN_PROVENANCE" "$now" "$1" >"$RUN_DIR/run.json"
+    if jq -e 'has("config")' "$RUN_DIR/run.json" >/dev/null; then
+        local digest
+        digest=$(jq -S -c '.config' "$RUN_DIR/run.json" | openssl dgst -sha256 -r | awk '{print $1}')
+        jq --arg digest "$digest" '.config_fingerprint = $digest' "$RUN_DIR/run.json" >"$now"
+        cp -- "$now" "$RUN_DIR/run.json"
+    fi
 }

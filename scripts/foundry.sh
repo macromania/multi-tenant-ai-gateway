@@ -607,6 +607,11 @@ case "${1:-}" in
     foundry-up) foundry_up ;;
     gateway-configure) select_cluster_or_both foundry.sh "$@"; gateway_configure ;;
     gateway-restore) select_cluster; gateway_restore ;;
+    gateway-configure-namespace)
+        # Used by make tenant-add in the dedicated cluster to connect one new tenant gateway.
+        select_cluster; validate_tenant "${TENANT:-}"; validate_connection; verify_context
+        configure_namespace "$TENANT"
+        ;;
     endpoints) select_cluster_or_both foundry.sh "$@"; endpoints ;;
     foundry-status)
         azure_context; validate_record
