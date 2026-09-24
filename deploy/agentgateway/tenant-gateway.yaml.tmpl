@@ -1,0 +1,40 @@
+# One tenant's own proxy in the dedicated cluster, owned by that tenant's controller.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayParameters
+metadata:
+  name: tenant-proxy
+  namespace: "@NAMESPACE@"
+spec:
+  service:
+    spec:
+      type: ClusterIP
+  deployment:
+    spec:
+      replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-proxy
+  namespace: "@NAMESPACE@"
+spec:
+  gatewayClassName: "agw-@NAMESPACE@"
+  infrastructure:
+    parametersRef:
+      group: agentgateway.dev
+      kind: AgentgatewayParameters
+      name: tenant-proxy
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same

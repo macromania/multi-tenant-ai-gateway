@@ -127,6 +127,22 @@ owner of the provider key it received in `x-mock-key-owner`. It echoes `x-probe-
 runtime through its metrics and admin port 8081, which has no authentication and is not exposed
 outside the cluster.
 
+## Load generation
+
+`scripts/load.sh` runs k6 as a Kubernetes Job in the `loadgen` namespace from the pinned k6 image and
+`deploy/k6/chat.js`. A plan lists streams (tenant, key, URL, rate, duration, and optional mock latency,
+prompt size, or forged tenant header). Each stream is an open-loop constant-arrival-rate scenario, so
+the offered load stays constant when the system under test slows down. Keys are copied from
+`.env.tenants` into a short-lived Secret and deleted with the Job.
+
+Every mock-bound request gets one verdict: verified (served with the sending tenant's provider key and
+its own probe ID), leak (another tenant's key or a wrong probe ID), blocked (refused by the gateway,
+such as 401 or 429), unverifiable (a 200 without the mock's headers), or failed. Probe streams print
+one `PROBE {json}` line per request, and every Job prints a `K6_SUMMARY {json}` line with per-stream
+counts, dropped iterations, latency percentiles, and verdicts. k6 also pushes its metrics, with
+latency as native histograms, to the cluster's Prometheus, where the "Tenants: what the clients saw"
+panels read them.
+
 ## Foundry registration and deployment
 
 ```bash

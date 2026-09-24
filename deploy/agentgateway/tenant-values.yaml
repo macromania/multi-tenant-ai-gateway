@@ -1,0 +1,26 @@
+# Settings shared by every tenant's own agentgateway controller in the dedicated cluster.
+# scripts/tenants.sh adds the per-tenant GatewayClass, controller name, write scope, discovery
+# scope, and proxy PodMonitor class from a generated values file.
+controller:
+  replicaCount: 1
+  xds:
+    mode: tls
+  extraEnv:
+    AGW_ENABLE_EXPERIMENTAL_GATEWAY_API_FEATURES: "false"
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 5s
+  proxy:
+    podMonitor:
+      enabled: true
+  grafanaDashboard:
+    enabled: false

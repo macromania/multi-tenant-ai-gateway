@@ -472,3 +472,36 @@ wait_status() {
     jq .status <<<"$document" >&2
     die "$namespace/$resource has no current $condition=True condition."
 }
+
+MOCK_POST_KEYS='import sys, urllib.request
+request = urllib.request.Request("http://127.0.0.1:8081/admin/keys", data=sys.stdin.buffer.read(), method="POST")
+print(urllib.request.urlopen(request, timeout=10).read().decode())'
+
+# Rebuilds Secret mock-upstream-keys from the selected cluster's tenant mock keys in .env.tenants,
+# then sends the same list to every running mock replica on standard input and checks that each
+# replica now accepts exactly those owners. A restarted replica loads the Secret at start.
+mock_push_keys() {
+    load_tenant_env
+    local upper list secret expected pods pod result
+    upper=$(printf '%s' "$CLUSTER" | tr '[:lower:]' '[:upper:]')
+    new_temp; list=$TEMP_FILE
+    jq -r --arg prefix "${upper}_TENANT_" '
+      to_entries[] | select(.key | test("^" + $prefix + "[0-9]{2}_MOCK_KEY$")) |
+      select(.value | test("^[a-f0-9]{64}$")) |
+      "tenant-" + (.key | capture("_TENANT_(?<n>[0-9]{2})_MOCK_KEY$").n) + " " + .value
+    ' "$TENANT_JSON" | sort >"$list"
+    new_temp; secret=$TEMP_FILE
+    jq -n --rawfile keys "$list" --arg namespace "$MOCK_NAMESPACE" '{apiVersion:"v1",kind:"Secret",type:"Opaque",
+      metadata:{name:"mock-upstream-keys",namespace:$namespace},stringData:{keys:$keys}}' >"$secret"
+    kube_apply -f "$secret" >/dev/null
+    expected=$(awk '{print $1}' "$list" | jq -R . | jq -sc 'sort')
+    pods=$(kube -n "$MOCK_NAMESPACE" get pods -l app.kubernetes.io/name=mock \
+        --field-selector=status.phase=Running -o name) || die "Cannot list mock replicas."
+    [[ -n "$pods" ]] || die "No running mock replica."
+    for pod in $pods; do
+        result=$(kube -n "$MOCK_NAMESPACE" exec -i "$pod" -- python -c "$MOCK_POST_KEYS" <"$list") ||
+            die "Cannot update the keys of $pod."
+        [[ "$(jq -c '.owners | sort' <<<"$result")" == "$expected" ]] ||
+            die "$pod did not accept the expected key owners."
+    done
+}
