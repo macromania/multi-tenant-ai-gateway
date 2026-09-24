@@ -1,0 +1,100 @@
+{
+  "commit": "6587122fdd95cd5f2fa46b804a12b98527ffb777",
+  "inputs_committed": true,
+  "input_fingerprint": "8663a35bd91230409cf9397a488c78c80b6947b87917df8bc26411dfe0a70a2e",
+  "cluster": "dedicated",
+  "comparison_id": "20260924T212116Z-63548",
+  "versions": {
+    "agentgateway": "v1.5.0",
+    "kind": "0.31.0",
+    "k6": "grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34",
+    "python": "python:3.13-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0",
+    "kube_prometheus_stack": "91.5.1",
+    "gateway_api": "1.6.0"
+  },
+  "inputs_changed_during_run": false,
+  "contention": {
+    "other_node": "mtag-shared-control-plane",
+    "present": true,
+    "samples": 4,
+    "mean_cpu": 0.17,
+    "limit_cpu": 0.5,
+    "confounded": false,
+    "host_load": {
+      "samples": 4,
+      "cpus": 10,
+      "mean_1m": 10.51,
+      "max_1m": 11.73
+    }
+  },
+  "kind": "onboarding",
+  "name": "tenant-02",
+  "run_id": "tenant-02-214235",
+  "tenant": "tenant-02",
+  "clock": "kind-node",
+  "started_ms": 1790286159938,
+  "config": {
+    "design": "dedicated",
+    "probe_rate": 5,
+    "tokens_per_minute": 20000,
+    "tenant_count_before": 1,
+    "mock_replicas": 2,
+    "foundry_connected": true
+  },
+  "objects_written_after_ms": 9796,
+  "enforced_after_ms": 9259,
+  "key_activated_after_ms": 10093,
+  "usable_after_ms": 10264,
+  "usable_after_activation_ms": 171,
+  "foundry_connected_after_ms": 18902,
+  "leaks": 0,
+  "objects_created": [
+    "Namespace/tenant-02",
+    "HelmRelease/agw-tenant-02 (controller Deployment, Service, ServiceAccount, Role, RoleBinding, 2 ClusterRoles, 2 ClusterRoleBindings, ServiceMonitor, PodMonitor)",
+    "GatewayClass/agw-tenant-02",
+    "AgentgatewayParameters/tenant-proxy",
+    "Gateway/agentgateway-proxy (proxy Deployment and Service)",
+    "AgentgatewayPolicy/tenant-auth",
+    "AgentgatewayPolicy/tenant-telemetry",
+    "AgentgatewayPolicy/tenant-limits",
+    "HTTPRoute/mock-chat",
+    "ConfigMap/tenant-key",
+    "Secret/mock-provider",
+    "AgentgatewayBackend/mock",
+    "Secret/foundry-provider",
+    "AgentgatewayBackend/foundry-model",
+    "HTTPRoute/foundry-chat"
+  ],
+  "shared_objects_changed": [],
+  "probe": {
+    "tenant": "tenant-02",
+    "role": "probe",
+    "target_rate": 5,
+    "duration": "300s",
+    "recorded": true,
+    "requests": 72,
+    "iterations": 72,
+    "dropped_iterations": 0,
+    "failed_rate": 0.875,
+    "duration_ms": {
+      "p(50)": 0,
+      "p(95)": 102.98361045,
+      "p(99)": 104.26183517999999,
+      "max": 105.64175
+    },
+    "verdicts": {
+      "verified": 9,
+      "leak": 0,
+      "blocked": 13,
+      "unverifiable": 0,
+      "failed": 50
+    },
+    "statuses": {
+      "0": 50,
+      "200": 9,
+      "401": 13
+    }
+  },
+  "complete_after_ms": 10264,
+  "config_fingerprint": "5ccb710e62b366deba2b4584961651b6347f6b9ba31d1e9fa8c6197b71fc620b"
+}

@@ -1,0 +1,326 @@
+{
+  "commit": "6587122fdd95cd5f2fa46b804a12b98527ffb777",
+  "inputs_committed": true,
+  "input_fingerprint": "8663a35bd91230409cf9397a488c78c80b6947b87917df8bc26411dfe0a70a2e",
+  "cluster": "dedicated",
+  "comparison_id": "20260924T195710Z-79784",
+  "versions": {
+    "agentgateway": "v1.5.0",
+    "kind": "0.31.0",
+    "k6": "grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34",
+    "python": "python:3.13-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0",
+    "kube_prometheus_stack": "91.5.1",
+    "gateway_api": "1.6.0"
+  },
+  "inputs_changed_during_run": false,
+  "contention": {
+    "other_node": "mtag-shared-control-plane",
+    "present": true,
+    "samples": 29,
+    "mean_cpu": 0.18,
+    "limit_cpu": 0.5,
+    "confounded": false,
+    "host_load": {
+      "samples": 28,
+      "cpus": 10,
+      "mean_1m": 5.94,
+      "max_1m": 9.08
+    }
+  },
+  "kind": "failure",
+  "name": "duplicate-key",
+  "run_id": "duplicate-key-200033",
+  "clock": "kind-node",
+  "started_ms": 1790280038524,
+  "ended_ms": 1790280210775,
+  "config": {
+    "failure": "duplicate-key",
+    "cause": "tenant-01",
+    "working_set": [
+      "tenant-01",
+      "tenant-02",
+      "tenant-03"
+    ],
+    "baseline_s": 30,
+    "observe_s": 120,
+    "probe_rate": 5,
+    "attack_profile": null,
+    "raise_limit": false,
+    "keep": false,
+    "mock_replicas": 2,
+    "design": "dedicated",
+    "apparatus": {
+      "tenant_count": 3,
+      "limits": {
+        "tenant-01": 20000,
+        "tenant-02": 20000,
+        "tenant-03": 20000
+      },
+      "mock_replicas": 2
+    }
+  },
+  "target": {
+    "component": "key authentication in tenant-02/tenant-auth",
+    "serves": 1
+  },
+  "marks": {
+    "probe_start": 1790280038524,
+    "trigger_start": 1790280069382,
+    "trigger_end": 1790280069921,
+    "half": null,
+    "observe_end": 1790280189932,
+    "restore_start": 1790280190248,
+    "restore_end": 1790280200311,
+    "end": 1790280210775
+  },
+  "invocation": {
+    "ok": true,
+    "evidence": "tenant-02's key entry holds tenant-01's key hash"
+  },
+  "notes": {},
+  "impact": [
+    {
+      "stream": "probe-tenant-01",
+      "tenant": "tenant-01",
+      "cause": false,
+      "requests": 868,
+      "censored": 1,
+      "baseline": {
+        "requests": 159,
+        "failed": 0,
+        "p95_ms": 107
+      },
+      "observe": {
+        "requests": 604,
+        "failed": 0,
+        "p95_ms": 106,
+        "expected_429": 0
+      },
+      "recover": {
+        "requests": 103,
+        "failed": 0
+      },
+      "statuses": {},
+      "leaks": 0,
+      "unverifiable": 0,
+      "slow": {
+        "count": 0,
+        "threshold_ms": 535,
+        "max_ms": null
+      },
+      "any_impact": false,
+      "material_impact": false,
+      "episodes": [],
+      "failed_time_ms": 0,
+      "recovery_after_trigger_ms": null,
+      "recovery_after_restore_ms": null
+    },
+    {
+      "stream": "probe-tenant-02",
+      "tenant": "tenant-02",
+      "cause": false,
+      "requests": 868,
+      "censored": 1,
+      "baseline": {
+        "requests": 159,
+        "failed": 0,
+        "p95_ms": 108
+      },
+      "observe": {
+        "requests": 604,
+        "failed": 602,
+        "p95_ms": 103,
+        "expected_429": 0
+      },
+      "recover": {
+        "requests": 103,
+        "failed": 33
+      },
+      "statuses": {
+        "401": 635
+      },
+      "leaks": 0,
+      "unverifiable": 0,
+      "slow": {
+        "count": 0,
+        "threshold_ms": 540,
+        "max_ms": null
+      },
+      "any_impact": true,
+      "material_impact": true,
+      "episodes": [
+        {
+          "start_ms": 554,
+          "duration_ms": 126990
+        }
+      ],
+      "failed_time_ms": 126990,
+      "recovery_after_trigger_ms": 127544,
+      "recovery_after_restore_ms": 6678
+    },
+    {
+      "stream": "probe-tenant-03",
+      "tenant": "tenant-03",
+      "cause": false,
+      "requests": 868,
+      "censored": 1,
+      "baseline": {
+        "requests": 159,
+        "failed": 0,
+        "p95_ms": 109
+      },
+      "observe": {
+        "requests": 604,
+        "failed": 0,
+        "p95_ms": 107,
+        "expected_429": 0
+      },
+      "recover": {
+        "requests": 103,
+        "failed": 0
+      },
+      "statuses": {},
+      "leaks": 0,
+      "unverifiable": 0,
+      "slow": {
+        "count": 0,
+        "threshold_ms": 545,
+        "max_ms": null
+      },
+      "any_impact": false,
+      "material_impact": false,
+      "episodes": [],
+      "failed_time_ms": 0,
+      "recovery_after_trigger_ms": null,
+      "recovery_after_restore_ms": null
+    }
+  ],
+  "extra_streams": [
+    {
+      "stream": "cross-tenant-01-at-tenant-02",
+      "requests": 866,
+      "verdicts": {
+        "blocked": 231,
+        "leak": 635
+      }
+    }
+  ],
+  "halves": null,
+  "leaks_total": 635,
+  "recovery": {
+    "restored": true,
+    "healthy": true,
+    "restore_ms": 10063,
+    "healthy_after_restore_ms": 15362,
+    "recovery_checks_passed": true
+  },
+  "validity": {
+    "valid": true,
+    "reasons": [],
+    "other_node_cpu": 0.18,
+    "confounded": false
+  },
+  "resources": {
+    "max_cpu_cores": [
+      {
+        "namespace": "tenant-02",
+        "pod": "agw-tenant-02-agentgateway-d9dc8ddbd-pm28q",
+        "value": 0.002
+      },
+      {
+        "namespace": "tenant-02",
+        "pod": "agentgateway-proxy-855fdf7cfd-d45r4",
+        "value": 0.007
+      },
+      {
+        "namespace": "tenant-01",
+        "pod": "agw-tenant-01-agentgateway-dfd9dbb6c-76mtg",
+        "value": 0.002
+      },
+      {
+        "namespace": "tenant-03",
+        "pod": "agentgateway-proxy-684f46c964-b8dtv",
+        "value": 0.006
+      },
+      {
+        "namespace": "tenant-03",
+        "pod": "agw-tenant-03-agentgateway-7564db4c7c-rkhng",
+        "value": 0.002
+      },
+      {
+        "namespace": "tenant-01",
+        "pod": "agentgateway-proxy-7bb84c5c76-2msqf",
+        "value": 0.006
+      }
+    ],
+    "max_working_set_mib": [
+      {
+        "namespace": "tenant-02",
+        "pod": "agw-tenant-02-agentgateway-d9dc8ddbd-pm28q",
+        "value": 47
+      },
+      {
+        "namespace": "tenant-02",
+        "pod": "agentgateway-proxy-855fdf7cfd-d45r4",
+        "value": 15
+      },
+      {
+        "namespace": "tenant-01",
+        "pod": "agw-tenant-01-agentgateway-dfd9dbb6c-76mtg",
+        "value": 44
+      },
+      {
+        "namespace": "tenant-03",
+        "pod": "agentgateway-proxy-684f46c964-b8dtv",
+        "value": 12
+      },
+      {
+        "namespace": "tenant-03",
+        "pod": "agw-tenant-03-agentgateway-7564db4c7c-rkhng",
+        "value": 46
+      },
+      {
+        "namespace": "tenant-01",
+        "pod": "agentgateway-proxy-7bb84c5c76-2msqf",
+        "value": 12
+      }
+    ],
+    "max_throttled_ratio": [
+      {
+        "namespace": "tenant-01",
+        "pod": "agw-tenant-01-agentgateway-dfd9dbb6c-76mtg",
+        "value": 0
+      },
+      {
+        "namespace": "tenant-03",
+        "pod": "agentgateway-proxy-684f46c964-b8dtv",
+        "value": 0
+      },
+      {
+        "namespace": "tenant-03",
+        "pod": "agw-tenant-03-agentgateway-7564db4c7c-rkhng",
+        "value": 0
+      },
+      {
+        "namespace": "tenant-01",
+        "pod": "agentgateway-proxy-7bb84c5c76-2msqf",
+        "value": 0
+      },
+      {
+        "namespace": "tenant-02",
+        "pod": "agw-tenant-02-agentgateway-d9dc8ddbd-pm28q",
+        "value": 0
+      },
+      {
+        "namespace": "tenant-02",
+        "pod": "agentgateway-proxy-855fdf7cfd-d45r4",
+        "value": 0
+      }
+    ]
+  },
+  "grafana": {
+    "tenants": "http://127.0.0.1:38494/d/mtag-tenants?from=1790280038524&to=1790280210775&var-tenant=All",
+    "agentgateway": "http://127.0.0.1:38494/d/agentgateway?from=1790280038524&to=1790280210775"
+  },
+  "config_fingerprint": "a8824595e7084435838db694fc1b52003420f440510fbf6dd78e3ce5d5a7df39"
+}

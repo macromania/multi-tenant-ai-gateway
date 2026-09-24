@@ -1,11 +1,22 @@
 # Renders results/report.md from every run record. Input: {runs: [...], current_fingerprint, commit,
-# generated_at, structure: {shared, dedicated}}. Each run carries .dir (its directory under results/).
+# generated_at, structure: {shared, dedicated}, grafana_ports: {shared, dedicated}}. Each run carries
+# .dir (its directory under results/).
 
 def ms(v): if v == null then "n/a" else "\(v) ms" end;
 def sec(v): if v == null then "n/a" else "\((v / 100 | round) / 10) s" end;
 def yesno(v): if v then "yes" else "no" end;
 def cell(v): if v == null then "n/a" else (v | tostring) end;
-def link(r): "[run](\(r.dir))" + (if r.grafana.tenants? then " · [Grafana](\(r.grafana.tenants))" else "" end);
+(.grafana_ports // {}) as $ports |
+# Records without their own Grafana link (onboarding, offboarding, Foundry smoke) get one built from
+# their start time and duration, with 10 seconds on either side.
+def grafana_url(r):
+  if r.grafana.tenants? then r.grafana.tenants
+  elif r.started_ms != null and $ports[r.cluster] != null then
+    (r.ended_ms // (r.started_ms + ([r.complete_after_ms, r.cleaned_after_ms, r.foundry_connected_after_ms] | map(select(. != null)) | max // 60000))) as $end |
+    "http://127.0.0.1:\($ports[r.cluster])/d/mtag-tenants?from=\(r.started_ms - 10000)&to=\($end + 10000)&var-tenant=All"
+  else null end;
+def link(r): "[run](\(r.dir))" + (grafana_url(r) as $g | if $g != null then " · [Grafana](\($g))" else "" end);
+def host(r): if r.contention.host_load.mean_1m != null then "\(r.contention.host_load.mean_1m) (max \(r.contention.host_load.max_1m))" else "n/a" end;
 def median($v): ($v | sort) as $s | ($s | length) as $n |
   if $n == 0 then null elif $n % 2 == 1 then $s[($n - 1) / 2] else (($s[$n / 2 - 1] + $s[$n / 2]) / 2) end;
 # Leaks outside the positive controls, wherever each kind of record keeps them.
@@ -74,13 +85,13 @@ def failure_section($name; $title; $explain):
       map(.[0] as $cluster | .[1] as $r |
         "**\($cluster)**" + (if $r == null then ": no usable run.\n" else
           " (\(link($r))). Target: \($r.target.component // "n/a") (serves \($r.target.serves // "n/a")). Invocation: \($r.invocation.evidence)." +
-          (if $r.contention.host_load.mean_1m != null then " Host load average during the run: \($r.contention.host_load.mean_1m) on \($r.contention.host_load.cpus) CPUs." else "" end) + "\n\n" +
+          (if $r.contention.host_load.mean_1m != null then " Host load average during the run: \(host($r)) on \($r.contention.host_load.cpus) CPUs." else "" end) + "\n\n" +
           (if $r.config.attack_profile != null then
             calibration_for($r) as $cal |
             (if $cal == null then "_No usable calibration matches this workload profile and mock replica count._\n\n"
              else "Matching calibration: [\($cal.name)](\($cal.dir)).\n\n" end)
            else "" end) +
-          "| Tenant | Affected | Episodes | Failed time | Failed statuses | Slow requests | Leaks | Healthy after the trigger |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n" +
+          "| Tenant | Affected | Episodes | Failed time | Statuses of failed or leaked probes | Slow requests | Leaks | Healthy after the trigger |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n" +
           (impact_rows($r) | join("\n")) + "\n" +
           (if ($r.extra_streams | length) > 0 then "\nExtra streams: " + ([$r.extra_streams[] | "\(.stream): \(.verdicts | to_entries | map("\(.key) \(.value)") | join(", "))"] | join("; ")) + "\n" else "" end) +
           (if $r.halves != null then "\nLeaks: first half \($r.halves.first_half.leaks), second half \($r.halves.second_half.leaks)" + (if $r.halves.during_restore != null then ", during the restore \($r.halves.during_restore.leaks)" else "" end) + ".\n" else "" end) +
@@ -105,6 +116,12 @@ def lifecycle_rows($kind; $measures):
     ($group[0].config) as $c |
     ($measures[] | "| \($c.tenant_count_before) | \(.label) | \(stat($s; .)) | \(stat($d; .)) |")) | flatten;
 
+# Links to every record behind the lifecycle rows, grouped the same way, with the host load.
+def lifecycle_runs($kind):
+  [$usable[] | select(.kind == $kind)] | group_by(.config_fingerprint) | sort_by(.[0].config.tenant_count_before) |
+  map("- \(.[0].config.tenant_count_before) tenant\(if .[0].config.tenant_count_before == 1 then "" else "s" end) before: " + (sort_by(.cluster) | map("\(.cluster) \(.name) (\(link(.)); host load \(host(.)))") | join("; "))) |
+  join("\n");
+
 # Every run directory that a section below shows, so the rest can be accounted for.
 def selected_dirs:
   ([[ "latency", "flood", "slow", "memory" ][] as $profile | ("shared", "dedicated") as $c |
@@ -127,7 +144,7 @@ def selected_dirs:
 "- **Shared** (`mtag-shared`): one agentgateway, one controller and one proxy, serves every tenant. Tenants are entries in shared objects.\n" +
 "- **Dedicated** (`mtag-dedicated`): each tenant has its own complete agentgateway, controller and proxy, in its own namespace.\n\n" +
 "\"Separation\" means what namespaces and separate gateways give tenants that share a cluster. \"Isolation\" would mean a dedicated cluster per tenant, which this comparison does not test.\n\n" +
-"What the data cannot prove: both clusters run on one laptop, each on a single Kind node that shares Docker Desktop's CPU and memory; the upstream is a mock except for small Foundry smoke tests; token limits are local to each proxy; every proxy has one replica; probe timing precision is 200 ms (five requests per second); memory figures are the maximum of 5-second samples; other software on the host (such as device management or antivirus scans) competes for the same CPUs, and its effect is recorded as the host load average in each run but is not a gate. Security limitations accepted for this proof of concept are listed in FINDINGS.md.\n\n" +
+"What the data cannot prove: both clusters run on one laptop, each on a single Kind node that shares Docker Desktop's CPU and memory; the upstream is a mock except for small Foundry smoke tests; token limits are local to each proxy; every proxy has one replica; probe timing precision is 200 ms (five requests per second); memory figures are the maximum of 5-second samples; other software on the host (such as device management or antivirus scans) competes for the same CPUs, and its effect is recorded as the host load average (mean and maximum of 1-minute averages, on 10 CPUs here) in each run but is not a gate. A valid run proves the apparatus delivered its workload; it does not prove that host load left timings unbiased, so compare timings together with the host load shown beside them. The campaign waited up to 15 minutes before each step for the host to settle, which is a best-effort wait, not a guarantee. Most lifecycle and footprint figures come from a single run each. Security limitations accepted for this proof of concept are listed in FINDINGS.md.\n\n" +
 "A run of any kind is compared only if it used committed code that still matches the current implementation, passed its own validity checks, and was not confounded by load on the other cluster (whose Kind node must have averaged at most 0.5 CPU). A shared run and a dedicated run are compared only when their configuration fingerprints match: the same workload, windows, tenants, limits, and mock replicas. Excluded runs, and usable runs not shown in a section, are listed at the end.\n\n" +
 "Each run links to its record under `results/` and to the matching time range in Grafana. The Grafana links work only while that cluster and its Prometheus data still exist (Prometheus keeps 15 days).\n\n" +
 
@@ -144,6 +161,7 @@ def selected_dirs:
    "**\($c)**" + (if $r == null then ": no usable run.\n" else " (\(link($r))), \(if $r.passed then "every check passed" else "**some checks failed**" end):\n\n" +
      ([$r.checks[] | "- \(if .passed then "Pass" else "**Fail**" end): \(.name) (\(.evidence))"] | join("\n")) + "\n" end)) | join("\n")) + compare_note($p) + "\n") +
 
+"## Failure modes\n\nIn the tables below, a probe counts as failed when it was not verified: a transport failure (status 0), an error status such as 401 or 500, or a leak, which can carry status 200. Failed time and episodes therefore include leaked responses, which are a confidentiality failure rather than unavailability.\n\n" +
 "## Noisy neighbour\n\n" +
 failure_section("flood"; "One tenant floods"; "tenant-01 sends 2,000 requests per second for 2 minutes and keeps its normal token limit, so the gateway refuses most of them with 429. tenant-02 and tenant-03 keep sending probes. With `RAISE_LIMIT=1`, tenant-01's limit is raised so the flood reaches the mock.") +
 failure_section("slow-upstream"; "Slow upstream for one tenant"; "tenant-01's requests take 30 seconds at the mock, holding about 1,500 requests in flight through its gateway.") +
@@ -163,18 +181,18 @@ failure_section("credential-rotation"; "Credential rotation"; "tenant-01's provi
 "## Gateway latency overhead\n\n" +
 (pair("scenario"; "latency") as $p |
  "Three pairs of 2-minute measurements at 50 requests per second (100 ms mock latency), each after a 30-second warm-up, alternating which of direct-to-mock and through-the-gateway went first. The figures are differences in percentiles, not per-request costs.\n\n" +
- "| Cluster | p50 difference | p95 difference | p99 difference | Run |\n| --- | --- | --- | --- | --- |\n" +
+ "| Cluster | p50 difference | p95 difference | p99 difference | Host load | Run |\n| --- | --- | --- | --- | --- | --- |\n" +
  ([("shared", $p.shared), ("dedicated", $p.dedicated)] | [.[0:2], .[2:4]] | map(.[0] as $c | .[1] as $r |
-   if $r == null then "| \($c) | no usable run | | | |" else
-   "| \($c) | \($r.difference_ms.p50.median) ms (\($r.difference_ms.p50.min) to \($r.difference_ms.p50.max)) | \($r.difference_ms.p95.median) ms (\($r.difference_ms.p95.min) to \($r.difference_ms.p95.max)) | \($r.difference_ms.p99.median) ms (\($r.difference_ms.p99.min) to \($r.difference_ms.p99.max)) | \(link($r)) |" end) | join("\n")) + "\n" + compare_note($p) + "\n") +
+   if $r == null then "| \($c) | no usable run | | | | |" else
+   "| \($c) | \($r.difference_ms.p50.median) ms (\($r.difference_ms.p50.min) to \($r.difference_ms.p50.max)) | \($r.difference_ms.p95.median) ms (\($r.difference_ms.p95.min) to \($r.difference_ms.p95.max)) | \($r.difference_ms.p99.median) ms (\($r.difference_ms.p99.min) to \($r.difference_ms.p99.max)) | \(host($r)) | \(link($r)) |" end) | join("\n")) + "\n" + compare_note($p) + "\n") +
 
 "## Configuration rollout\n\n" +
 (pair("scenario"; "rollout") as $p |
  "Every tenant's limit changed by the same amount through the normal command.\n\n" +
- "| Cluster | Records written | Enforcement objects written | Enforced for every tenant after | Run |\n| --- | --- | --- | --- | --- |\n" +
+ "| Cluster | Records written | Enforcement objects written | Enforced for every tenant after | Host load | Run |\n| --- | --- | --- | --- | --- | --- |\n" +
  ([("shared", $p.shared), ("dedicated", $p.dedicated)] | [.[0:2], .[2:4]] | map(.[0] as $c | .[1] as $r |
-   if $r == null then "| \($c) | no usable run | | | |" else
-   "| \($c) | \($r.records_written) | \($r.enforcement_objects_written) | \(ms($r.enforced_everywhere_after_ms)) | \(link($r)) |" end) | join("\n")) + "\n" + compare_note($p) + "\n") +
+   if $r == null then "| \($c) | no usable run | | | | |" else
+   "| \($c) | \($r.records_written) | \($r.enforcement_objects_written) | \(ms($r.enforced_everywhere_after_ms)) | \(host($r)) | \(link($r)) |" end) | join("\n")) + "\n" + compare_note($p) + "\n") +
 
 "## Foundry smoke test\n\n" +
 (pair("scenario"; "foundry-smoke") as $p |
@@ -190,19 +208,21 @@ failure_section("credential-rotation"; "Credential rotation"; "tenant-01's provi
 (lifecycle_rows("onboarding"; [{label: "Limit enforced after (key still inactive)", field: "enforced_after_ms"},
    {label: "Usable after", field: "usable_after_ms"}, {label: "Own Foundry connection after", field: "foundry_connected_after_ms"}])
    | if length == 0 then "| n/a | | | |" else join("\n") end) + "\n\n" +
+"Runs behind these rows:\n\n" + lifecycle_runs("onboarding") + "\n\n" +
 "**Offboarding**\n\n| Tenants before | Measure | Shared | Dedicated |\n| --- | --- | --- | --- |\n" +
 (lifecycle_rows("offboarding"; [{label: "Refused by authentication after (upper bound)", field: "revoked_between_ms", index: 1},
    {label: "Cleaned after", field: "cleaned_after_ms"}]) | if length == 0 then "| n/a | | | |" else join("\n") end) + "\n\n" +
+"Runs behind these rows:\n\n" + lifecycle_runs("offboarding") + "\n\n" +
 "Objects created per tenant: shared \([$usable[] | select(.kind == "onboarding" and .cluster == "shared") | .objects_created | length] | first // "n/a"), dedicated \([$usable[] | select(.kind == "onboarding" and .cluster == "dedicated") | .objects_created | length] | first // "n/a"). Shared objects changed per tenant: shared \([$usable[] | select(.kind == "onboarding" and .cluster == "shared") | .shared_objects_changed | length] | first // "n/a"), dedicated \([$usable[] | select(.kind == "onboarding" and .cluster == "dedicated") | .shared_objects_changed | length] | first // "n/a").\n\n" +
 "Revocation (from deactivating the key to authentication refusing it) is reported per run as an interval between the last success and the first of 25 refusals: " +
 ([$usable[] | select(.kind == "offboarding") | "\(.cluster) \(.name) \(.revoked_between_ms | map(cell(.)) | join(" to ")) ms"] | if length == 0 then "no usable run" else join("; ") end) + ".\n\n" +
 
 "## Footprint\n\n" +
 "Gateway pods only (controllers and proxies), at each tenant count, idle and under 1 request per second per tenant. Memory is the maximum of 5-second samples.\n\n" +
-"| Tenants | Cluster | Gateway pods | CPU idle / load (cores) | Memory idle / load (MiB) | Reserved requests (CPU, MiB) | Active gateway series | Kind node MiB | Run |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n" +
+"| Tenants | Cluster | Gateway pods | CPU idle / load (cores) | Memory idle / load (MiB) | Reserved requests (CPU, MiB) | Active gateway series | Kind node MiB | Host load | Run |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n" +
 ([$usable[] | select(.kind == "scale" and (.stopped | not))] | map(.config.tenants) | unique | map(
    pair("scale"; "tenants-\(.)") as $p | [$p.shared, $p.dedicated][] | select(. != null) |
-   "| \(.config.tenants) | \(.cluster)\(if $p.comparable then "" else " (not compared)" end) | \(.under_load.gateway_pods) | \(.idle.cpu_cores_total) / \(.under_load.cpu_cores_total) | \(.idle.memory_mib_total_max_sampled) / \(.under_load.memory_mib_total_max_sampled) | \(.under_load.reserved.cpu_request_cores), \(.under_load.reserved.memory_request_mib) | \(.under_load.active_gateway_series) | \(.kind_node_memory_mib) | \(link(.)) |") | join("\n")) + "\n" +
+   "| \(.config.tenants) | \(.cluster)\(if $p.comparable then "" else " (not compared)" end) | \(.under_load.gateway_pods) | \(.idle.cpu_cores_total) / \(.under_load.cpu_cores_total) | \(.idle.memory_mib_total_max_sampled) / \(.under_load.memory_mib_total_max_sampled) | \(.under_load.reserved.cpu_request_cores), \(.under_load.reserved.memory_request_mib) | \(.under_load.active_gateway_series) | \(.kind_node_memory_mib) | \(host(.)) | \(link(.)) |") | join("\n")) + "\n" +
 ([$usable[] | select(.kind == "scale" and .stopped)] | if length > 0 then "\nStopped sweeps: " + (map("\(.cluster) at \(.config.tenants) tenants: \(.reason)") | join("; ")) + "\n" else "" end) + "\n" +
 
 "## Structural findings\n\n" +

@@ -1,0 +1,6 @@
+
+=== FOUNDRY SMOKE | mtag-shared
+
+  tenant-01                       HTTP 200
+  tenant-02                       HTTP 200
+  tenant-03                       HTTP 200

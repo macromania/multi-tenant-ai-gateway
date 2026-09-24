@@ -1,0 +1,4 @@
+
+=== PROXY MEMORY | mtag-shared
+
+  Target                          proxy agentgateway-system/agentgateway-proxy (serves 3 tenants)

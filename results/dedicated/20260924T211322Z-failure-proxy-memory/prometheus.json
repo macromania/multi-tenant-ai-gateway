@@ -1,0 +1,267 @@
+[
+  {
+    "expr": "max_over_time(max(container_memory_working_set_bytes{namespace=\"tenant-01\",pod=~\"agentgateway-proxy-.*\",container=\"agentgateway\"})[150s:5s])",
+    "time": 1790284616,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1790284616,
+              "497201152"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max by (namespace, pod) (max_over_time(rate(container_cpu_usage_seconds_total{namespace=~\"agentgateway-system|tenant-[0-9]+\",container!=\"\",container!=\"POD\"}[1m])[240s:15s]))",
+    "time": 1790284640,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {
+              "namespace": "tenant-02",
+              "pod": "agw-tenant-02-agentgateway-d9dc8ddbd-pm28q"
+            },
+            "value": [
+              1790284640,
+              "0.00231064947923607"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-02",
+              "pod": "agentgateway-proxy-855fdf7cfd-d45r4"
+            },
+            "value": [
+              1790284640,
+              "0.0067879869372520244"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-03",
+              "pod": "agentgateway-proxy-684f46c964-b8dtv"
+            },
+            "value": [
+              1790284640,
+              "0.006544082295614506"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-03",
+              "pod": "agw-tenant-03-agentgateway-7564db4c7c-rkhng"
+            },
+            "value": [
+              1790284640,
+              "0.002608493422805733"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-01",
+              "pod": "agentgateway-proxy-7bb84c5c76-2msqf"
+            },
+            "value": [
+              1790284640,
+              "0.055907454452387255"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-01",
+              "pod": "agw-tenant-01-agentgateway-dfd9dbb6c-ts6dk"
+            },
+            "value": [
+              1790284640,
+              "0.003179228889492245"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max by (namespace, pod) (max_over_time(container_memory_working_set_bytes{namespace=~\"agentgateway-system|tenant-[0-9]+\",container!=\"\",container!=\"POD\"}[240s]))",
+    "time": 1790284640,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {
+              "namespace": "tenant-02",
+              "pod": "agw-tenant-02-agentgateway-d9dc8ddbd-pm28q"
+            },
+            "value": [
+              1790284640,
+              "48803840"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-02",
+              "pod": "agentgateway-proxy-855fdf7cfd-d45r4"
+            },
+            "value": [
+              1790284640,
+              "12910592"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-03",
+              "pod": "agentgateway-proxy-684f46c964-b8dtv"
+            },
+            "value": [
+              1790284640,
+              "12337152"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-03",
+              "pod": "agw-tenant-03-agentgateway-7564db4c7c-rkhng"
+            },
+            "value": [
+              1790284640,
+              "48660480"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-01",
+              "pod": "agentgateway-proxy-7bb84c5c76-2msqf"
+            },
+            "value": [
+              1790284640,
+              "497201152"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-01",
+              "pod": "agw-tenant-01-agentgateway-dfd9dbb6c-ts6dk"
+            },
+            "value": [
+              1790284640,
+              "48689152"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max by (namespace, pod) (max_over_time((rate(container_cpu_cfs_throttled_periods_total{namespace=~\"agentgateway-system|tenant-[0-9]+\",container!=\"\"}[1m]) / rate(container_cpu_cfs_periods_total{namespace=~\"agentgateway-system|tenant-[0-9]+\",container!=\"\"}[1m]))[240s:15s]))",
+    "time": 1790284640,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {
+              "namespace": "tenant-03",
+              "pod": "agentgateway-proxy-684f46c964-b8dtv"
+            },
+            "value": [
+              1790284640,
+              "0"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-03",
+              "pod": "agw-tenant-03-agentgateway-7564db4c7c-rkhng"
+            },
+            "value": [
+              1790284640,
+              "0"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-01",
+              "pod": "agentgateway-proxy-7bb84c5c76-2msqf"
+            },
+            "value": [
+              1790284640,
+              "0"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-02",
+              "pod": "agw-tenant-02-agentgateway-d9dc8ddbd-pm28q"
+            },
+            "value": [
+              1790284640,
+              "0"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-02",
+              "pod": "agentgateway-proxy-855fdf7cfd-d45r4"
+            },
+            "value": [
+              1790284640,
+              "0"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-01",
+              "pod": "agw-tenant-01-agentgateway-dfd9dbb6c-ts6dk"
+            },
+            "value": [
+              1790284640,
+              "0"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max(sum by (pod) (increase(container_cpu_cfs_throttled_periods_total{namespace=\"mock-upstream\",container=\"mock\"}[175s])) / sum by (pod) (increase(container_cpu_cfs_periods_total{namespace=\"mock-upstream\",container=\"mock\"}[175s])))",
+    "time": 1790284616,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1790284616,
+              "0"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max(max_over_time(kube_pod_container_status_terminated_reason{namespace=\"loadgen\",reason=\"OOMKilled\"}[240s]))",
+    "time": 1790284640,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": []
+      }
+    }
+  }
+]

@@ -1,0 +1,2 @@
+Experimental feature enabled
+Successful flushed time series to remote write endpoint but it took 1.082150042s while flush period is 1s. Some samples may be dropped.

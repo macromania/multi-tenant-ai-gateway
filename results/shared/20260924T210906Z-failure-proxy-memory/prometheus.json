@@ -1,0 +1,147 @@
+[
+  {
+    "expr": "max_over_time(max(container_memory_working_set_bytes{namespace=\"agentgateway-system\",pod=~\"agentgateway-proxy-.*\",container=\"agentgateway\"})[150s:5s])",
+    "time": 1790284360,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1790284360,
+              "426115072"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max by (namespace, pod) (max_over_time(rate(container_cpu_usage_seconds_total{namespace=~\"agentgateway-system|tenant-[0-9]+\",container!=\"\",container!=\"POD\"}[1m])[236s:15s]))",
+    "time": 1790284380,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {
+              "namespace": "agentgateway-system",
+              "pod": "agentgateway-proxy-f78c8c6c7-scfz5"
+            },
+            "value": [
+              1790284380,
+              "0.04809327445176604"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "agentgateway-system",
+              "pod": "agentgateway-5c8c69f949-7bfqp"
+            },
+            "value": [
+              1790284380,
+              "0.003456088741803022"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max by (namespace, pod) (max_over_time(container_memory_working_set_bytes{namespace=~\"agentgateway-system|tenant-[0-9]+\",container!=\"\",container!=\"POD\"}[236s]))",
+    "time": 1790284380,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {
+              "namespace": "agentgateway-system",
+              "pod": "agentgateway-proxy-f78c8c6c7-scfz5"
+            },
+            "value": [
+              1790284380,
+              "426115072"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "agentgateway-system",
+              "pod": "agentgateway-5c8c69f949-7bfqp"
+            },
+            "value": [
+              1790284380,
+              "48734208"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max by (namespace, pod) (max_over_time((rate(container_cpu_cfs_throttled_periods_total{namespace=~\"agentgateway-system|tenant-[0-9]+\",container!=\"\"}[1m]) / rate(container_cpu_cfs_periods_total{namespace=~\"agentgateway-system|tenant-[0-9]+\",container!=\"\"}[1m]))[236s:15s]))",
+    "time": 1790284380,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {
+              "namespace": "agentgateway-system",
+              "pod": "agentgateway-proxy-f78c8c6c7-scfz5"
+            },
+            "value": [
+              1790284380,
+              "0"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "agentgateway-system",
+              "pod": "agentgateway-5c8c69f949-7bfqp"
+            },
+            "value": [
+              1790284380,
+              "0"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max(sum by (pod) (increase(container_cpu_cfs_throttled_periods_total{namespace=\"mock-upstream\",container=\"mock\"}[175s])) / sum by (pod) (increase(container_cpu_cfs_periods_total{namespace=\"mock-upstream\",container=\"mock\"}[175s])))",
+    "time": 1790284360,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1790284360,
+              "0"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max(max_over_time(kube_pod_container_status_terminated_reason{namespace=\"loadgen\",reason=\"OOMKilled\"}[236s]))",
+    "time": 1790284380,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": []
+      }
+    }
+  }
+]

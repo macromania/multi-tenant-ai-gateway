@@ -1,0 +1,4 @@
+
+=== CREDENTIAL ROTATION | mtag-shared
+
+  Target                          tenant-01's provider key, at the mock and in agentgateway-system (serves 1 tenant)

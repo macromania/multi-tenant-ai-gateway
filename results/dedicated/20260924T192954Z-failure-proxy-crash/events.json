@@ -1,0 +1,30 @@
+[
+  {
+    "time": "2026-09-24T19:30:32Z",
+    "namespace": "tenant-01",
+    "object": "Pod/agentgateway-proxy-7bb84c5c76-2msqf",
+    "reason": "Pulled",
+    "message": "Container image \"cr.agentgateway.dev/agentgateway:v1.5.0\" already present on machine and can be accessed by the pod"
+  },
+  {
+    "time": "2026-09-24T19:30:32Z",
+    "namespace": "tenant-01",
+    "object": "Pod/agentgateway-proxy-7bb84c5c76-2msqf",
+    "reason": "Created",
+    "message": "Container created"
+  },
+  {
+    "time": "2026-09-24T19:30:32Z",
+    "namespace": "tenant-01",
+    "object": "Pod/agentgateway-proxy-7bb84c5c76-2msqf",
+    "reason": "Started",
+    "message": "Container started"
+  },
+  {
+    "time": "2026-09-24T19:30:32Z",
+    "namespace": "tenant-01",
+    "object": "Pod/agentgateway-proxy-7bb84c5c76-2msqf",
+    "reason": "Unhealthy",
+    "message": "Readiness probe failed: Get \"http://10.244.0.24:15021/healthz/ready\": dial tcp 10.244.0.24:15021: connect: connection refused"
+  }
+]

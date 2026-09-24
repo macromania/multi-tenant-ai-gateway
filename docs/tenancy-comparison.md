@@ -262,8 +262,11 @@ Prometheus query and its answer, and the Kubernetes events from the run window.
 - Other software on the host competes for the same CPUs. On this machine, device management
   inventory scripts and antivirus scans raised the load average to about 10 on 10 CPUs and made the
   calibration fail. Each run records the host's load average (`contention.host_load`) as evidence;
-  it is not a gate, because the run's own load raises it too. The campaign waits for the host to
-  settle before each step.
+  it is not a gate, because the run's own load raises it too. The campaign waited up to 15 minutes
+  before each step for the host to settle, a best-effort wait: some runs still averaged a load of
+  11 to 16 on 10 CPUs. A valid run proves the apparatus delivered its workload, not that host load
+  left its timings unbiased, so the report shows the host load beside every timing.
+- Most lifecycle and footprint figures come from a single run each.
 - Shared provider quota exhaustion is not tested. Both designs sit in front of one deployment with
   10,000 tokens per minute, and local limits in separate proxies cannot cap their total.
 - Version and CRD upgrades are out of scope.

@@ -1,0 +1,183 @@
+{
+  "commit": "6587122fdd95cd5f2fa46b804a12b98527ffb777",
+  "inputs_committed": true,
+  "input_fingerprint": "8663a35bd91230409cf9397a488c78c80b6947b87917df8bc26411dfe0a70a2e",
+  "cluster": "shared",
+  "comparison_id": "20260924T175728Z-64158",
+  "versions": {
+    "agentgateway": "v1.5.0",
+    "kind": "0.31.0",
+    "k6": "grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34",
+    "python": "python:3.13-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0",
+    "kube_prometheus_stack": "91.5.1",
+    "gateway_api": "1.6.0"
+  },
+  "inputs_changed_during_run": false,
+  "contention": {
+    "other_node": "mtag-dedicated-control-plane",
+    "present": true,
+    "samples": 25,
+    "mean_cpu": 0.18,
+    "limit_cpu": 0.5,
+    "confounded": false,
+    "host_load": {
+      "samples": 25,
+      "cpus": 10,
+      "mean_1m": 4.77,
+      "max_1m": 7.15
+    }
+  },
+  "kind": "calibration",
+  "name": "memory",
+  "run_id": "memory-180454",
+  "clock": "kind-node",
+  "started_ms": 1790273099589,
+  "ended_ms": 1790273256605,
+  "config": {
+    "profile": {
+      "rate": 50,
+      "prompt_chars": 262144,
+      "max_completion_tokens": 16,
+      "latency_ms": 30000,
+      "timeout": "60s",
+      "job_memory": "6Gi",
+      "raised_limit": true
+    },
+    "target": "mock",
+    "duration_s": 120,
+    "mock_replicas": 2,
+    "design": "shared",
+    "apparatus": {
+      "tenant_count": 3,
+      "limits": {
+        "tenant-01": 20000,
+        "tenant-02": 20000,
+        "tenant-03": 20000
+      },
+      "mock_replicas": 2
+    }
+  },
+  "attack": {
+    "tenant": "tenant-01",
+    "role": "attack",
+    "target_rate": 50,
+    "duration": "120s",
+    "recorded": false,
+    "requests": 6001,
+    "iterations": 6001,
+    "dropped_iterations": 0,
+    "failed_rate": 0,
+    "duration_ms": {
+      "p(50)": 30002.628416,
+      "p(95)": 30004.448917,
+      "p(99)": 30006.074125,
+      "max": 30038.75975
+    },
+    "verdicts": {
+      "verified": 6001,
+      "leak": 0,
+      "blocked": 0,
+      "unverifiable": 0,
+      "failed": 0
+    },
+    "statuses": {
+      "200": 6001
+    }
+  },
+  "probes": [
+    {
+      "tenant": "tenant-01",
+      "role": "probe",
+      "target_rate": 5,
+      "duration": "150s",
+      "recorded": true,
+      "requests": 750,
+      "iterations": 750,
+      "dropped_iterations": 0,
+      "failed_rate": 0,
+      "duration_ms": {
+        "p(95)": 103.0093689,
+        "p(99)": 105.00909625,
+        "max": 108.097292,
+        "p(50)": 101.8548955
+      },
+      "verdicts": {
+        "verified": 750,
+        "leak": 0,
+        "blocked": 0,
+        "unverifiable": 0,
+        "failed": 0
+      },
+      "statuses": {
+        "200": 750
+      }
+    },
+    {
+      "tenant": "tenant-02",
+      "role": "probe",
+      "target_rate": 5,
+      "duration": "150s",
+      "recorded": true,
+      "requests": 751,
+      "iterations": 751,
+      "dropped_iterations": 0,
+      "failed_rate": 0,
+      "duration_ms": {
+        "p(95)": 103.131625,
+        "p(99)": 105.15131249999999,
+        "max": 109.825959,
+        "p(50)": 101.901459
+      },
+      "verdicts": {
+        "verified": 751,
+        "leak": 0,
+        "blocked": 0,
+        "unverifiable": 0,
+        "failed": 0
+      },
+      "statuses": {
+        "200": 751
+      }
+    },
+    {
+      "tenant": "tenant-03",
+      "role": "probe",
+      "target_rate": 5,
+      "duration": "150s",
+      "recorded": true,
+      "requests": 751,
+      "iterations": 751,
+      "dropped_iterations": 0,
+      "failed_rate": 0,
+      "duration_ms": {
+        "p(95)": 103.077021,
+        "p(99)": 105.628417,
+        "max": 108.026083,
+        "p(50)": 101.894541
+      },
+      "verdicts": {
+        "verified": 751,
+        "leak": 0,
+        "blocked": 0,
+        "unverifiable": 0,
+        "failed": 0
+      },
+      "statuses": {
+        "200": 751
+      }
+    }
+  ],
+  "mock": {
+    "max_throttled_ratio": 0,
+    "max_in_flight": 1519,
+    "errors": 0,
+    "requests": 8534.596939626574
+  },
+  "valid": true,
+  "reasons": [],
+  "grafana": {
+    "tenants": "http://127.0.0.1:38484/d/mtag-tenants?from=1790273099589&to=1790273256605&var-tenant=All",
+    "agentgateway": "http://127.0.0.1:38484/d/agentgateway?from=1790273099589&to=1790273256605"
+  },
+  "config_fingerprint": "731570edeb55a210841e51b3777b847775e780fd6190d0436eff5627f309b5a6"
+}

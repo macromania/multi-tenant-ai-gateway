@@ -1,0 +1,357 @@
+{
+  "commit": "6587122fdd95cd5f2fa46b804a12b98527ffb777",
+  "inputs_committed": true,
+  "input_fingerprint": "8663a35bd91230409cf9397a488c78c80b6947b87917df8bc26411dfe0a70a2e",
+  "cluster": "dedicated",
+  "comparison_id": "20260924T212116Z-63548",
+  "versions": {
+    "agentgateway": "v1.5.0",
+    "kind": "0.31.0",
+    "k6": "grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34",
+    "python": "python:3.13-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0",
+    "kube_prometheus_stack": "91.5.1",
+    "gateway_api": "1.6.0"
+  },
+  "inputs_changed_during_run": false,
+  "contention": {
+    "other_node": "mtag-shared-control-plane",
+    "present": true,
+    "samples": 29,
+    "mean_cpu": 0.21,
+    "limit_cpu": 0.5,
+    "confounded": false,
+    "host_load": {
+      "samples": 29,
+      "cpus": 10,
+      "mean_1m": 6.87,
+      "max_1m": 8.90
+    }
+  },
+  "kind": "scale",
+  "name": "tenants-10",
+  "run_id": "tenants-10-215020",
+  "clock": "kind-node",
+  "started_ms": 1790286621724,
+  "ended_ms": 1790286804867,
+  "load_window_ms": {
+    "from": 1790286684882,
+    "to": 1790286804867
+  },
+  "config": {
+    "tenants": 10,
+    "idle_s": 60,
+    "load_s": 120,
+    "profile": "scale",
+    "design": "dedicated",
+    "apparatus": {
+      "tenant_count": 10,
+      "limits": {
+        "tenant-01": 20000,
+        "tenant-02": 20000,
+        "tenant-03": 20000,
+        "tenant-04": 20000,
+        "tenant-05": 20000,
+        "tenant-06": 20000,
+        "tenant-07": 20000,
+        "tenant-08": 20000,
+        "tenant-09": 20000,
+        "tenant-10": 20000
+      },
+      "mock_replicas": 2
+    }
+  },
+  "expected_gateway_pods": 20,
+  "idle": {
+    "cpu_cores_total": 0.027,
+    "memory_mib_total_max_sampled": 507,
+    "per_pod": [
+      {
+        "namespace": "tenant-01",
+        "pod": "agw-tenant-01-agentgateway-dfd9dbb6c-ts6dk",
+        "cpu_cores": 0.002,
+        "memory_mib_max_sampled": 48
+      },
+      {
+        "namespace": "tenant-01",
+        "pod": "agentgateway-proxy-7bb84c5c76-2msqf",
+        "cpu_cores": 0.001,
+        "memory_mib_max_sampled": 9
+      },
+      {
+        "namespace": "tenant-02",
+        "pod": "agw-tenant-02-agentgateway-d9dc8ddbd-htvtb",
+        "cpu_cores": 0.002,
+        "memory_mib_max_sampled": 40
+      },
+      {
+        "namespace": "tenant-02",
+        "pod": "agentgateway-proxy-6b677f565b-mffpm",
+        "cpu_cores": 0.001,
+        "memory_mib_max_sampled": 8
+      },
+      {
+        "namespace": "tenant-03",
+        "pod": "agw-tenant-03-agentgateway-7564db4c7c-mvqvn",
+        "cpu_cores": 0.001,
+        "memory_mib_max_sampled": 40
+      },
+      {
+        "namespace": "tenant-03",
+        "pod": "agentgateway-proxy-67b77657d4-f6hjv",
+        "cpu_cores": 0.001,
+        "memory_mib_max_sampled": 8
+      },
+      {
+        "namespace": "tenant-04",
+        "pod": "agw-tenant-04-agentgateway-86d5dbc57d-2rp4c",
+        "cpu_cores": 0.002,
+        "memory_mib_max_sampled": 43
+      },
+      {
+        "namespace": "tenant-04",
+        "pod": "agentgateway-proxy-7668b6857b-zzc9t",
+        "cpu_cores": 0.001,
+        "memory_mib_max_sampled": 8
+      },
+      {
+        "namespace": "tenant-05",
+        "pod": "agw-tenant-05-agentgateway-677b59d747-56h52",
+        "cpu_cores": 0.002,
+        "memory_mib_max_sampled": 40
+      },
+      {
+        "namespace": "tenant-05",
+        "pod": "agentgateway-proxy-8bcfb66cd-82ndf",
+        "cpu_cores": 0.001,
+        "memory_mib_max_sampled": 8
+      },
+      {
+        "namespace": "tenant-06",
+        "pod": "agentgateway-proxy-7c77cbfb7b-484rv",
+        "cpu_cores": 0.001,
+        "memory_mib_max_sampled": 8
+      },
+      {
+        "namespace": "tenant-06",
+        "pod": "agw-tenant-06-agentgateway-5d65c69748-gb47w",
+        "cpu_cores": 0.001,
+        "memory_mib_max_sampled": 39
+      },
+      {
+        "namespace": "tenant-07",
+        "pod": "agw-tenant-07-agentgateway-7bc8f8b857-gw2w5",
+        "cpu_cores": 0.003,
+        "memory_mib_max_sampled": 43
+      },
+      {
+        "namespace": "tenant-07",
+        "pod": "agentgateway-proxy-c84d4dbf5-tn5xd",
+        "cpu_cores": 0.001,
+        "memory_mib_max_sampled": 8
+      },
+      {
+        "namespace": "tenant-08",
+        "pod": "agentgateway-proxy-697d74dbb-c7jbf",
+        "cpu_cores": 0.001,
+        "memory_mib_max_sampled": 8
+      },
+      {
+        "namespace": "tenant-08",
+        "pod": "agw-tenant-08-agentgateway-559497d466-wz8mk",
+        "cpu_cores": 0.002,
+        "memory_mib_max_sampled": 45
+      },
+      {
+        "namespace": "tenant-09",
+        "pod": "agw-tenant-09-agentgateway-7d8f7bc77f-p8m2z",
+        "cpu_cores": 0.001,
+        "memory_mib_max_sampled": 47
+      },
+      {
+        "namespace": "tenant-09",
+        "pod": "agentgateway-proxy-7b4b9bb6d7-7wlnf",
+        "cpu_cores": 0.001,
+        "memory_mib_max_sampled": 9
+      },
+      {
+        "namespace": "tenant-10",
+        "pod": "agentgateway-proxy-5bfc86c9c9-thqwn",
+        "cpu_cores": 0.001,
+        "memory_mib_max_sampled": 9
+      },
+      {
+        "namespace": "tenant-10",
+        "pod": "agw-tenant-10-agentgateway-786ff846f7-5sbmx",
+        "cpu_cores": 0.001,
+        "memory_mib_max_sampled": 39
+      }
+    ],
+    "gateway_pods": 20,
+    "coverage": {
+      "cpu_pods": 20,
+      "memory_pods": 20
+    },
+    "reserved": {
+      "cpu_request_cores": 2,
+      "memory_request_mib": 2560,
+      "cpu_limit_cores": 20,
+      "memory_limit_mib": 10240
+    },
+    "active_gateway_series": 3150,
+    "prometheus_head_series_total": 30603
+  },
+  "under_load": {
+    "cpu_cores_total": 0.035,
+    "memory_mib_total_max_sampled": 510,
+    "per_pod": [
+      {
+        "namespace": "tenant-01",
+        "pod": "agw-tenant-01-agentgateway-dfd9dbb6c-ts6dk",
+        "cpu_cores": 0.001,
+        "memory_mib_max_sampled": 48
+      },
+      {
+        "namespace": "tenant-01",
+        "pod": "agentgateway-proxy-7bb84c5c76-2msqf",
+        "cpu_cores": 0.002,
+        "memory_mib_max_sampled": 10
+      },
+      {
+        "namespace": "tenant-02",
+        "pod": "agw-tenant-02-agentgateway-d9dc8ddbd-htvtb",
+        "cpu_cores": 0.001,
+        "memory_mib_max_sampled": 40
+      },
+      {
+        "namespace": "tenant-02",
+        "pod": "agentgateway-proxy-6b677f565b-mffpm",
+        "cpu_cores": 0.002,
+        "memory_mib_max_sampled": 9
+      },
+      {
+        "namespace": "tenant-03",
+        "pod": "agw-tenant-03-agentgateway-7564db4c7c-mvqvn",
+        "cpu_cores": 0.001,
+        "memory_mib_max_sampled": 40
+      },
+      {
+        "namespace": "tenant-03",
+        "pod": "agentgateway-proxy-67b77657d4-f6hjv",
+        "cpu_cores": 0.002,
+        "memory_mib_max_sampled": 8
+      },
+      {
+        "namespace": "tenant-04",
+        "pod": "agw-tenant-04-agentgateway-86d5dbc57d-2rp4c",
+        "cpu_cores": 0.002,
+        "memory_mib_max_sampled": 43
+      },
+      {
+        "namespace": "tenant-04",
+        "pod": "agentgateway-proxy-7668b6857b-zzc9t",
+        "cpu_cores": 0.002,
+        "memory_mib_max_sampled": 9
+      },
+      {
+        "namespace": "tenant-05",
+        "pod": "agw-tenant-05-agentgateway-677b59d747-56h52",
+        "cpu_cores": 0.001,
+        "memory_mib_max_sampled": 40
+      },
+      {
+        "namespace": "tenant-05",
+        "pod": "agentgateway-proxy-8bcfb66cd-82ndf",
+        "cpu_cores": 0.002,
+        "memory_mib_max_sampled": 9
+      },
+      {
+        "namespace": "tenant-06",
+        "pod": "agentgateway-proxy-7c77cbfb7b-484rv",
+        "cpu_cores": 0.002,
+        "memory_mib_max_sampled": 9
+      },
+      {
+        "namespace": "tenant-06",
+        "pod": "agw-tenant-06-agentgateway-5d65c69748-gb47w",
+        "cpu_cores": 0.001,
+        "memory_mib_max_sampled": 39
+      },
+      {
+        "namespace": "tenant-07",
+        "pod": "agw-tenant-07-agentgateway-7bc8f8b857-gw2w5",
+        "cpu_cores": 0.002,
+        "memory_mib_max_sampled": 40
+      },
+      {
+        "namespace": "tenant-07",
+        "pod": "agentgateway-proxy-c84d4dbf5-tn5xd",
+        "cpu_cores": 0.002,
+        "memory_mib_max_sampled": 9
+      },
+      {
+        "namespace": "tenant-08",
+        "pod": "agentgateway-proxy-697d74dbb-c7jbf",
+        "cpu_cores": 0.002,
+        "memory_mib_max_sampled": 9
+      },
+      {
+        "namespace": "tenant-08",
+        "pod": "agw-tenant-08-agentgateway-559497d466-wz8mk",
+        "cpu_cores": 0.002,
+        "memory_mib_max_sampled": 44
+      },
+      {
+        "namespace": "tenant-09",
+        "pod": "agw-tenant-09-agentgateway-7d8f7bc77f-p8m2z",
+        "cpu_cores": 0.002,
+        "memory_mib_max_sampled": 47
+      },
+      {
+        "namespace": "tenant-09",
+        "pod": "agentgateway-proxy-7b4b9bb6d7-7wlnf",
+        "cpu_cores": 0.002,
+        "memory_mib_max_sampled": 9
+      },
+      {
+        "namespace": "tenant-10",
+        "pod": "agentgateway-proxy-5bfc86c9c9-thqwn",
+        "cpu_cores": 0.002,
+        "memory_mib_max_sampled": 9
+      },
+      {
+        "namespace": "tenant-10",
+        "pod": "agw-tenant-10-agentgateway-786ff846f7-5sbmx",
+        "cpu_cores": 0.002,
+        "memory_mib_max_sampled": 39
+      }
+    ],
+    "gateway_pods": 20,
+    "coverage": {
+      "cpu_pods": 20,
+      "memory_pods": 20
+    },
+    "reserved": {
+      "cpu_request_cores": 2,
+      "memory_request_mib": 2560,
+      "cpu_limit_cores": 20,
+      "memory_limit_mib": 10240
+    },
+    "active_gateway_series": 3150,
+    "prometheus_head_series_total": 30982
+  },
+  "kind_node_memory_mib": 4832,
+  "load": {
+    "requests": 1209,
+    "dropped": 0,
+    "verdicts": {
+      "verified": 1209
+    }
+  },
+  "grafana": {
+    "tenants": "http://127.0.0.1:38494/d/mtag-tenants?from=1790286621724&to=1790286804867&var-tenant=All",
+    "agentgateway": "http://127.0.0.1:38494/d/agentgateway?from=1790286621724&to=1790286804867"
+  },
+  "reasons": [],
+  "valid": true,
+  "config_fingerprint": "c75c808f326749d190e02cc52950dc1afdcc4af48af34e4c3d8396f65dcb7219"
+}

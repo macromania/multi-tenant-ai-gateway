@@ -1,0 +1,316 @@
+{
+  "commit": "6587122fdd95cd5f2fa46b804a12b98527ffb777",
+  "inputs_committed": true,
+  "input_fingerprint": "8663a35bd91230409cf9397a488c78c80b6947b87917df8bc26411dfe0a70a2e",
+  "cluster": "dedicated",
+  "comparison_id": "20260924T200524Z-88742",
+  "versions": {
+    "agentgateway": "v1.5.0",
+    "kind": "0.31.0",
+    "k6": "grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34",
+    "python": "python:3.13-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0",
+    "kube_prometheus_stack": "91.5.1",
+    "gateway_api": "1.6.0"
+  },
+  "inputs_changed_during_run": false,
+  "contention": {
+    "other_node": "mtag-shared-control-plane",
+    "present": true,
+    "samples": 30,
+    "mean_cpu": 0.2,
+    "limit_cpu": 0.5,
+    "confounded": false,
+    "host_load": {
+      "samples": 30,
+      "cpus": 10,
+      "mean_1m": 5.61,
+      "max_1m": 6.36
+    }
+  },
+  "kind": "failure",
+  "name": "flood",
+  "run_id": "flood-200853",
+  "clock": "kind-node",
+  "started_ms": 1790280540954,
+  "ended_ms": 1790280719567,
+  "config": {
+    "failure": "flood",
+    "cause": "tenant-01",
+    "working_set": [
+      "tenant-01",
+      "tenant-02",
+      "tenant-03"
+    ],
+    "baseline_s": 30,
+    "observe_s": 120,
+    "probe_rate": 5,
+    "attack_profile": {
+      "rate": 2000,
+      "prompt_chars": 40,
+      "max_completion_tokens": 16,
+      "latency_ms": 100,
+      "raised_limit": false
+    },
+    "raise_limit": false,
+    "keep": false,
+    "mock_replicas": 2,
+    "design": "dedicated",
+    "apparatus": {
+      "tenant_count": 3,
+      "limits": {
+        "tenant-01": 20000,
+        "tenant-02": 20000,
+        "tenant-03": 20000
+      },
+      "mock_replicas": 2
+    }
+  },
+  "target": {
+    "component": "proxy tenant-01/agentgateway-proxy",
+    "serves": 1
+  },
+  "marks": {
+    "probe_start": 1790280540954,
+    "trigger_start": 1790280571921,
+    "trigger_end": 1790280573467,
+    "half": null,
+    "observe_end": 1790280698639,
+    "restore_start": 1790280698855,
+    "restore_end": 1790280709125,
+    "end": 1790280719567
+  },
+  "invocation": {
+    "ok": true,
+    "evidence": "239999 flood requests sent, 237267 refused with 429 at the tenant limit"
+  },
+  "notes": {},
+  "impact": [
+    {
+      "stream": "probe-tenant-01",
+      "tenant": "tenant-01",
+      "cause": true,
+      "requests": 905,
+      "censored": 1,
+      "baseline": {
+        "requests": 164,
+        "failed": 0,
+        "p95_ms": 108
+      },
+      "observe": {
+        "requests": 635,
+        "failed": 0,
+        "p95_ms": 106,
+        "expected_429": 609
+      },
+      "recover": {
+        "requests": 104,
+        "failed": 0
+      },
+      "statuses": {},
+      "leaks": 0,
+      "unverifiable": 0,
+      "slow": {
+        "count": 0,
+        "threshold_ms": 540,
+        "max_ms": null
+      },
+      "any_impact": false,
+      "material_impact": false,
+      "episodes": [],
+      "failed_time_ms": 0,
+      "recovery_after_trigger_ms": null,
+      "recovery_after_restore_ms": null
+    },
+    {
+      "stream": "probe-tenant-02",
+      "tenant": "tenant-02",
+      "cause": false,
+      "requests": 905,
+      "censored": 1,
+      "baseline": {
+        "requests": 164,
+        "failed": 0,
+        "p95_ms": 109
+      },
+      "observe": {
+        "requests": 635,
+        "failed": 0,
+        "p95_ms": 103,
+        "expected_429": 0
+      },
+      "recover": {
+        "requests": 104,
+        "failed": 0
+      },
+      "statuses": {},
+      "leaks": 0,
+      "unverifiable": 0,
+      "slow": {
+        "count": 0,
+        "threshold_ms": 545,
+        "max_ms": null
+      },
+      "any_impact": false,
+      "material_impact": false,
+      "episodes": [],
+      "failed_time_ms": 0,
+      "recovery_after_trigger_ms": null,
+      "recovery_after_restore_ms": null
+    },
+    {
+      "stream": "probe-tenant-03",
+      "tenant": "tenant-03",
+      "cause": false,
+      "requests": 905,
+      "censored": 1,
+      "baseline": {
+        "requests": 164,
+        "failed": 0,
+        "p95_ms": 108
+      },
+      "observe": {
+        "requests": 635,
+        "failed": 0,
+        "p95_ms": 103,
+        "expected_429": 0
+      },
+      "recover": {
+        "requests": 104,
+        "failed": 0
+      },
+      "statuses": {},
+      "leaks": 0,
+      "unverifiable": 0,
+      "slow": {
+        "count": 0,
+        "threshold_ms": 540,
+        "max_ms": null
+      },
+      "any_impact": false,
+      "material_impact": false,
+      "episodes": [],
+      "failed_time_ms": 0,
+      "recovery_after_trigger_ms": null,
+      "recovery_after_restore_ms": null
+    }
+  ],
+  "extra_streams": [],
+  "halves": null,
+  "leaks_total": 0,
+  "recovery": {
+    "restored": true,
+    "healthy": true,
+    "restore_ms": 10270,
+    "healthy_after_restore_ms": 15567,
+    "recovery_checks_passed": true
+  },
+  "validity": {
+    "valid": true,
+    "reasons": [],
+    "other_node_cpu": 0.2,
+    "confounded": false
+  },
+  "resources": {
+    "max_cpu_cores": [
+      {
+        "namespace": "tenant-02",
+        "pod": "agw-tenant-02-agentgateway-d9dc8ddbd-pm28q",
+        "value": 0.002
+      },
+      {
+        "namespace": "tenant-02",
+        "pod": "agentgateway-proxy-855fdf7cfd-d45r4",
+        "value": 0.006
+      },
+      {
+        "namespace": "tenant-01",
+        "pod": "agw-tenant-01-agentgateway-dfd9dbb6c-76mtg",
+        "value": 0.002
+      },
+      {
+        "namespace": "tenant-03",
+        "pod": "agentgateway-proxy-684f46c964-b8dtv",
+        "value": 0.006
+      },
+      {
+        "namespace": "tenant-03",
+        "pod": "agw-tenant-03-agentgateway-7564db4c7c-rkhng",
+        "value": 0.002
+      },
+      {
+        "namespace": "tenant-01",
+        "pod": "agentgateway-proxy-7bb84c5c76-2msqf",
+        "value": 0.247
+      }
+    ],
+    "max_working_set_mib": [
+      {
+        "namespace": "tenant-02",
+        "pod": "agw-tenant-02-agentgateway-d9dc8ddbd-pm28q",
+        "value": 47
+      },
+      {
+        "namespace": "tenant-02",
+        "pod": "agentgateway-proxy-855fdf7cfd-d45r4",
+        "value": 12
+      },
+      {
+        "namespace": "tenant-01",
+        "pod": "agw-tenant-01-agentgateway-dfd9dbb6c-76mtg",
+        "value": 45
+      },
+      {
+        "namespace": "tenant-03",
+        "pod": "agentgateway-proxy-684f46c964-b8dtv",
+        "value": 12
+      },
+      {
+        "namespace": "tenant-03",
+        "pod": "agw-tenant-03-agentgateway-7564db4c7c-rkhng",
+        "value": 46
+      },
+      {
+        "namespace": "tenant-01",
+        "pod": "agentgateway-proxy-7bb84c5c76-2msqf",
+        "value": 98
+      }
+    ],
+    "max_throttled_ratio": [
+      {
+        "namespace": "tenant-03",
+        "pod": "agw-tenant-03-agentgateway-7564db4c7c-rkhng",
+        "value": 0
+      },
+      {
+        "namespace": "tenant-01",
+        "pod": "agentgateway-proxy-7bb84c5c76-2msqf",
+        "value": 0
+      },
+      {
+        "namespace": "tenant-02",
+        "pod": "agw-tenant-02-agentgateway-d9dc8ddbd-pm28q",
+        "value": 0
+      },
+      {
+        "namespace": "tenant-02",
+        "pod": "agentgateway-proxy-855fdf7cfd-d45r4",
+        "value": 0
+      },
+      {
+        "namespace": "tenant-01",
+        "pod": "agw-tenant-01-agentgateway-dfd9dbb6c-76mtg",
+        "value": 0
+      },
+      {
+        "namespace": "tenant-03",
+        "pod": "agentgateway-proxy-684f46c964-b8dtv",
+        "value": 0
+      }
+    ]
+  },
+  "grafana": {
+    "tenants": "http://127.0.0.1:38494/d/mtag-tenants?from=1790280540954&to=1790280719567&var-tenant=All",
+    "agentgateway": "http://127.0.0.1:38494/d/agentgateway?from=1790280540954&to=1790280719567"
+  },
+  "config_fingerprint": "8d3d44d655bab667e74196c98b1e18b98cba45e31301d94a0103d381ad1c5132"
+}

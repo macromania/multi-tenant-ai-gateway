@@ -1,0 +1,248 @@
+[
+  {
+    "expr": "max by (namespace, pod) (max_over_time(rate(container_cpu_usage_seconds_total{namespace=~\"agentgateway-system|tenant-[0-9]+\",container!=\"\",container!=\"POD\"}[1m])[188s:15s]))",
+    "time": 1790280719,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {
+              "namespace": "tenant-02",
+              "pod": "agw-tenant-02-agentgateway-d9dc8ddbd-pm28q"
+            },
+            "value": [
+              1790280719,
+              "0.0017679793955137106"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-02",
+              "pod": "agentgateway-proxy-855fdf7cfd-d45r4"
+            },
+            "value": [
+              1790280719,
+              "0.0055737268205373535"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-01",
+              "pod": "agw-tenant-01-agentgateway-dfd9dbb6c-76mtg"
+            },
+            "value": [
+              1790280719,
+              "0.001973471589282891"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-03",
+              "pod": "agentgateway-proxy-684f46c964-b8dtv"
+            },
+            "value": [
+              1790280719,
+              "0.005594592227695711"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-03",
+              "pod": "agw-tenant-03-agentgateway-7564db4c7c-rkhng"
+            },
+            "value": [
+              1790280719,
+              "0.0017493401981569048"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-01",
+              "pod": "agentgateway-proxy-7bb84c5c76-2msqf"
+            },
+            "value": [
+              1790280719,
+              "0.2466677757520511"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max by (namespace, pod) (max_over_time(container_memory_working_set_bytes{namespace=~\"agentgateway-system|tenant-[0-9]+\",container!=\"\",container!=\"POD\"}[188s]))",
+    "time": 1790280719,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {
+              "namespace": "tenant-02",
+              "pod": "agw-tenant-02-agentgateway-d9dc8ddbd-pm28q"
+            },
+            "value": [
+              1790280719,
+              "48787456"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-02",
+              "pod": "agentgateway-proxy-855fdf7cfd-d45r4"
+            },
+            "value": [
+              1790280719,
+              "12849152"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-01",
+              "pod": "agw-tenant-01-agentgateway-dfd9dbb6c-76mtg"
+            },
+            "value": [
+              1790280719,
+              "46809088"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-03",
+              "pod": "agentgateway-proxy-684f46c964-b8dtv"
+            },
+            "value": [
+              1790280719,
+              "12406784"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-03",
+              "pod": "agw-tenant-03-agentgateway-7564db4c7c-rkhng"
+            },
+            "value": [
+              1790280719,
+              "48648192"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-01",
+              "pod": "agentgateway-proxy-7bb84c5c76-2msqf"
+            },
+            "value": [
+              1790280719,
+              "102465536"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max by (namespace, pod) (max_over_time((rate(container_cpu_cfs_throttled_periods_total{namespace=~\"agentgateway-system|tenant-[0-9]+\",container!=\"\"}[1m]) / rate(container_cpu_cfs_periods_total{namespace=~\"agentgateway-system|tenant-[0-9]+\",container!=\"\"}[1m]))[188s:15s]))",
+    "time": 1790280719,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {
+              "namespace": "tenant-03",
+              "pod": "agw-tenant-03-agentgateway-7564db4c7c-rkhng"
+            },
+            "value": [
+              1790280719,
+              "0"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-01",
+              "pod": "agentgateway-proxy-7bb84c5c76-2msqf"
+            },
+            "value": [
+              1790280719,
+              "0"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-02",
+              "pod": "agw-tenant-02-agentgateway-d9dc8ddbd-pm28q"
+            },
+            "value": [
+              1790280719,
+              "0"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-02",
+              "pod": "agentgateway-proxy-855fdf7cfd-d45r4"
+            },
+            "value": [
+              1790280719,
+              "0"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-01",
+              "pod": "agw-tenant-01-agentgateway-dfd9dbb6c-76mtg"
+            },
+            "value": [
+              1790280719,
+              "0"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-03",
+              "pod": "agentgateway-proxy-684f46c964-b8dtv"
+            },
+            "value": [
+              1790280719,
+              "0"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max(sum by (pod) (increase(container_cpu_cfs_throttled_periods_total{namespace=\"mock-upstream\",container=\"mock\"}[126s])) / sum by (pod) (increase(container_cpu_cfs_periods_total{namespace=\"mock-upstream\",container=\"mock\"}[126s])))",
+    "time": 1790280698,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1790280698,
+              "0"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max(max_over_time(kube_pod_container_status_terminated_reason{namespace=\"loadgen\",reason=\"OOMKilled\"}[188s]))",
+    "time": 1790280719,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": []
+      }
+    }
+  }
+]

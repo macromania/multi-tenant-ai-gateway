@@ -1,0 +1,4 @@
+
+=== BAD TENANT CONFIG | mtag-dedicated
+
+  Target                          token limit policy tenant-01/tenant-limits (serves 1 tenant)

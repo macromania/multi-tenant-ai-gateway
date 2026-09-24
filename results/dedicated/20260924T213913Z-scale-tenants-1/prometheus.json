@@ -1,0 +1,364 @@
+[
+  {
+    "expr": "sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{namespace=~\"agentgateway-system|tenant-[0-9]+\",container!=\"\",container!=\"POD\"}[60s]))",
+    "time": 1790286014,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {
+              "namespace": "tenant-01",
+              "pod": "agw-tenant-01-agentgateway-dfd9dbb6c-ts6dk"
+            },
+            "value": [
+              1790286014,
+              "0.0029351101144269864"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-01",
+              "pod": "agentgateway-proxy-7bb84c5c76-2msqf"
+            },
+            "value": [
+              1790286014,
+              "0.001333289733662259"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max by (namespace, pod) (max_over_time(container_memory_working_set_bytes{namespace=~\"agentgateway-system|tenant-[0-9]+\",container!=\"\",container!=\"POD\"}[60s]))",
+    "time": 1790286014,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {
+              "namespace": "tenant-01",
+              "pod": "agw-tenant-01-agentgateway-dfd9dbb6c-ts6dk"
+            },
+            "value": [
+              1790286014,
+              "48717824"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-01",
+              "pod": "agentgateway-proxy-7bb84c5c76-2msqf"
+            },
+            "value": [
+              1790286014,
+              "9375744"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "count(kube_pod_status_phase{namespace=~\"agentgateway-system|tenant-[0-9]+\",phase=\"Running\"} == 1)",
+    "time": 1790286014,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1790286014,
+              "2"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "sum by (resource) (kube_pod_container_resource_requests{namespace=~\"agentgateway-system|tenant-[0-9]+\"})",
+    "time": 1790286014,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {
+              "resource": "cpu"
+            },
+            "value": [
+              1790286014,
+              "0.2"
+            ]
+          },
+          {
+            "metric": {
+              "resource": "memory"
+            },
+            "value": [
+              1790286014,
+              "268435456"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "sum by (resource) (kube_pod_container_resource_limits{namespace=~\"agentgateway-system|tenant-[0-9]+\"})",
+    "time": 1790286014,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {
+              "resource": "memory"
+            },
+            "value": [
+              1790286014,
+              "1073741824"
+            ]
+          },
+          {
+            "metric": {
+              "resource": "cpu"
+            },
+            "value": [
+              1790286014,
+              "2"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "count({namespace=~\"agentgateway-system|tenant-[0-9]+\",__name__=~\"agentgateway_.*\"})",
+    "time": 1790286014,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1790286014,
+              "665"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max(prometheus_tsdb_head_series)",
+    "time": 1790286014,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1790286014,
+              "19212"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{namespace=~\"agentgateway-system|tenant-[0-9]+\",container!=\"\",container!=\"POD\"}[120s]))",
+    "time": 1790286136,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {
+              "namespace": "tenant-01",
+              "pod": "agw-tenant-01-agentgateway-dfd9dbb6c-ts6dk"
+            },
+            "value": [
+              1790286136,
+              "0.0022820259794479668"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-01",
+              "pod": "agentgateway-proxy-7bb84c5c76-2msqf"
+            },
+            "value": [
+              1790286136,
+              "0.00256298688960669"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max by (namespace, pod) (max_over_time(container_memory_working_set_bytes{namespace=~\"agentgateway-system|tenant-[0-9]+\",container!=\"\",container!=\"POD\"}[120s]))",
+    "time": 1790286136,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {
+              "namespace": "tenant-01",
+              "pod": "agw-tenant-01-agentgateway-dfd9dbb6c-ts6dk"
+            },
+            "value": [
+              1790286136,
+              "48717824"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "tenant-01",
+              "pod": "agentgateway-proxy-7bb84c5c76-2msqf"
+            },
+            "value": [
+              1790286136,
+              "10166272"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "count(kube_pod_status_phase{namespace=~\"agentgateway-system|tenant-[0-9]+\",phase=\"Running\"} == 1)",
+    "time": 1790286136,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1790286136,
+              "2"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "sum by (resource) (kube_pod_container_resource_requests{namespace=~\"agentgateway-system|tenant-[0-9]+\"})",
+    "time": 1790286136,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {
+              "resource": "cpu"
+            },
+            "value": [
+              1790286136,
+              "0.2"
+            ]
+          },
+          {
+            "metric": {
+              "resource": "memory"
+            },
+            "value": [
+              1790286136,
+              "268435456"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "sum by (resource) (kube_pod_container_resource_limits{namespace=~\"agentgateway-system|tenant-[0-9]+\"})",
+    "time": 1790286136,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {
+              "resource": "memory"
+            },
+            "value": [
+              1790286136,
+              "1073741824"
+            ]
+          },
+          {
+            "metric": {
+              "resource": "cpu"
+            },
+            "value": [
+              1790286136,
+              "2"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "count({namespace=~\"agentgateway-system|tenant-[0-9]+\",__name__=~\"agentgateway_.*\"})",
+    "time": 1790286136,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1790286136,
+              "665"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max(prometheus_tsdb_head_series)",
+    "time": 1790286136,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1790286136,
+              "19457"
+            ]
+          }
+        ]
+      }
+    }
+  }
+]

@@ -1,0 +1,17 @@
+
+=== SEPARATION | mtag-shared
+
+  [PASS] No key is refused (agentgateway-system) HTTP 401
+  [PASS] An invalid key is refused (agentgateway-system) HTTP 401
+  [PASS] tenant-01 is served with its own provider key HTTP 200, key owner tenant-01
+  [PASS] tenant-02 is served with its own provider key HTTP 200, key owner tenant-02
+  [PASS] tenant-03 is served with its own provider key HTTP 200, key owner tenant-03
+  [PASS] A forged x-tenant header does not reach tenant-02 HTTP 200, key owner tenant-01
+  [PASS] tenant-01 is limited after spending its budget 429 on request 1 at 100 tokens per minute
+  [PASS] tenant-02 is not limited by tenant-01's budget HTTP 200
+  [PASS] tenant-03 is not limited by tenant-01's budget HTTP 200
+  [PASS] No probe reached another tenant's provider key 432 probe requests, 0 leaks
+  [PASS] The leak detector flags a wrong key owner 101 control requests, 101 flagged
+  [PASS] The leak detector flags a wrong echoed probe ID 101 control requests, 101 flagged
+  [PASS] Gateway metrics attribute traffic to each tenant tenant-01=164, tenant-02=163, tenant-03=163
+  [PASS] Recorded: the shared controller can list Secrets outside its namespace yes

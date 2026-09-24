@@ -1,0 +1,293 @@
+{
+  "commit": "6587122fdd95cd5f2fa46b804a12b98527ffb777",
+  "inputs_committed": true,
+  "input_fingerprint": "8663a35bd91230409cf9397a488c78c80b6947b87917df8bc26411dfe0a70a2e",
+  "cluster": "shared",
+  "comparison_id": "20260924T202543Z-9748",
+  "versions": {
+    "agentgateway": "v1.5.0",
+    "kind": "0.31.0",
+    "k6": "grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34",
+    "python": "python:3.13-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0",
+    "kube_prometheus_stack": "91.5.1",
+    "gateway_api": "1.6.0"
+  },
+  "inputs_changed_during_run": false,
+  "contention": {
+    "other_node": "mtag-dedicated-control-plane",
+    "present": true,
+    "samples": 35,
+    "mean_cpu": 0.25,
+    "limit_cpu": 0.5,
+    "confounded": false,
+    "host_load": {
+      "samples": 35,
+      "cpus": 10,
+      "mean_1m": 4.22,
+      "max_1m": 11.49
+    }
+  },
+  "kind": "failure",
+  "name": "controller-outage",
+  "run_id": "controller-outage-202550",
+  "clock": "kind-node",
+  "started_ms": 1790281556131,
+  "ended_ms": 1790281773108,
+  "config": {
+    "failure": "controller-outage",
+    "cause": "tenant-01",
+    "working_set": [
+      "tenant-01",
+      "tenant-02",
+      "tenant-03"
+    ],
+    "baseline_s": 30,
+    "observe_s": 120,
+    "probe_rate": 5,
+    "attack_profile": null,
+    "raise_limit": false,
+    "keep": false,
+    "mock_replicas": 2,
+    "design": "shared",
+    "apparatus": {
+      "tenant_count": 3,
+      "limits": {
+        "tenant-01": 20000,
+        "tenant-02": 20000,
+        "tenant-03": 20000
+      },
+      "mock_replicas": 2
+    }
+  },
+  "target": {
+    "component": "controller agentgateway-system/agentgateway",
+    "serves": 3
+  },
+  "marks": {
+    "probe_start": 1790281556131,
+    "trigger_start": 1790281586955,
+    "trigger_end": 1790281609223,
+    "half": null,
+    "observe_end": 1790281708211,
+    "restore_start": 1790281739457,
+    "restore_end": 1790281762641,
+    "end": 1790281773108
+  },
+  "invocation": {
+    "ok": true,
+    "evidence": "the controller had zero ready replicas; changes applied during the outage: tenant-01=false, tenant-02=false"
+  },
+  "notes": {
+    "controller": "agentgateway",
+    "controller_ready_replicas_during": 0,
+    "requested_changes": [
+      {
+        "tenant": "tenant-01",
+        "requested": 21000
+      },
+      {
+        "tenant": "tenant-02",
+        "requested": 21000
+      }
+    ],
+    "changes_during_outage": [
+      {
+        "tenant": "tenant-01",
+        "requested": 21000,
+        "enforced_after_30s": 20000,
+        "applied": false
+      },
+      {
+        "tenant": "tenant-02",
+        "requested": 21000,
+        "enforced_after_30s": 20000,
+        "applied": false
+      }
+    ],
+    "pending_changes_applied_after_restart": true
+  },
+  "impact": [
+    {
+      "stream": "probe-tenant-01",
+      "tenant": "tenant-01",
+      "cause": false,
+      "requests": 1091,
+      "censored": 0,
+      "baseline": {
+        "requests": 159,
+        "failed": 0,
+        "p95_ms": 111
+      },
+      "observe": {
+        "requests": 762,
+        "failed": 0,
+        "p95_ms": 108,
+        "expected_429": 0
+      },
+      "recover": {
+        "requests": 169,
+        "failed": 0
+      },
+      "statuses": {},
+      "leaks": 0,
+      "unverifiable": 0,
+      "slow": {
+        "count": 0,
+        "threshold_ms": 555,
+        "max_ms": null
+      },
+      "any_impact": false,
+      "material_impact": false,
+      "episodes": [],
+      "failed_time_ms": 0,
+      "recovery_after_trigger_ms": null,
+      "recovery_after_restore_ms": null
+    },
+    {
+      "stream": "probe-tenant-02",
+      "tenant": "tenant-02",
+      "cause": false,
+      "requests": 1091,
+      "censored": 0,
+      "baseline": {
+        "requests": 159,
+        "failed": 0,
+        "p95_ms": 110
+      },
+      "observe": {
+        "requests": 762,
+        "failed": 0,
+        "p95_ms": 109,
+        "expected_429": 0
+      },
+      "recover": {
+        "requests": 169,
+        "failed": 0
+      },
+      "statuses": {},
+      "leaks": 0,
+      "unverifiable": 0,
+      "slow": {
+        "count": 0,
+        "threshold_ms": 550,
+        "max_ms": null
+      },
+      "any_impact": false,
+      "material_impact": false,
+      "episodes": [],
+      "failed_time_ms": 0,
+      "recovery_after_trigger_ms": null,
+      "recovery_after_restore_ms": null
+    },
+    {
+      "stream": "probe-tenant-03",
+      "tenant": "tenant-03",
+      "cause": false,
+      "requests": 1091,
+      "censored": 0,
+      "baseline": {
+        "requests": 159,
+        "failed": 0,
+        "p95_ms": 110
+      },
+      "observe": {
+        "requests": 762,
+        "failed": 0,
+        "p95_ms": 108,
+        "expected_429": 0
+      },
+      "recover": {
+        "requests": 169,
+        "failed": 0
+      },
+      "statuses": {},
+      "leaks": 0,
+      "unverifiable": 0,
+      "slow": {
+        "count": 0,
+        "threshold_ms": 550,
+        "max_ms": null
+      },
+      "any_impact": false,
+      "material_impact": false,
+      "episodes": [],
+      "failed_time_ms": 0,
+      "recovery_after_trigger_ms": null,
+      "recovery_after_restore_ms": null
+    }
+  ],
+  "extra_streams": [],
+  "halves": null,
+  "leaks_total": 0,
+  "recovery": {
+    "restored": true,
+    "healthy": true,
+    "restore_ms": 23184,
+    "healthy_after_restore_ms": 28528,
+    "recovery_checks_passed": true
+  },
+  "validity": {
+    "valid": true,
+    "reasons": [],
+    "other_node_cpu": 0.25,
+    "confounded": false
+  },
+  "resources": {
+    "max_cpu_cores": [
+      {
+        "namespace": "agentgateway-system",
+        "pod": "agentgateway-5c8c69f949-8hmmx",
+        "value": 0.002
+      },
+      {
+        "namespace": "agentgateway-system",
+        "pod": "agentgateway-proxy-f78c8c6c7-scfz5",
+        "value": 0.012
+      },
+      {
+        "namespace": "agentgateway-system",
+        "pod": "agentgateway-5c8c69f949-7bfqp",
+        "value": 0.005
+      }
+    ],
+    "max_working_set_mib": [
+      {
+        "namespace": "agentgateway-system",
+        "pod": "agentgateway-5c8c69f949-8hmmx",
+        "value": 48
+      },
+      {
+        "namespace": "agentgateway-system",
+        "pod": "agentgateway-proxy-f78c8c6c7-scfz5",
+        "value": 26
+      },
+      {
+        "namespace": "agentgateway-system",
+        "pod": "agentgateway-5c8c69f949-7bfqp",
+        "value": 32
+      }
+    ],
+    "max_throttled_ratio": [
+      {
+        "namespace": "agentgateway-system",
+        "pod": "agentgateway-proxy-f78c8c6c7-scfz5",
+        "value": 0
+      },
+      {
+        "namespace": "agentgateway-system",
+        "pod": "agentgateway-5c8c69f949-7bfqp",
+        "value": 0
+      },
+      {
+        "namespace": "agentgateway-system",
+        "pod": "agentgateway-5c8c69f949-8hmmx",
+        "value": 0
+      }
+    ]
+  },
+  "grafana": {
+    "tenants": "http://127.0.0.1:38484/d/mtag-tenants?from=1790281556131&to=1790281773108&var-tenant=All",
+    "agentgateway": "http://127.0.0.1:38484/d/agentgateway?from=1790281556131&to=1790281773108"
+  },
+  "config_fingerprint": "28ff4de1da4a10e245ebac58a1b5e62bad102774dbecfe7d1fdf1daf59502dd6"
+}

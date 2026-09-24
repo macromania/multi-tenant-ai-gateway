@@ -1,0 +1,9 @@
+[
+  {
+    "time": "2026-09-24T19:39:20Z",
+    "namespace": "tenant-01",
+    "object": "Gateway/agentgateway-proxy",
+    "reason": "AgentGatewayNackError",
+    "message": "[{\"key\":\"policy/traffic/tenant-01/tenant-limits:rl-local:tenant-01/agentgateway-proxy\",\"warn\":\"invalid CEL expression for policy.conditional.condition: parse: ERROR: <input>:1:17: Syntax error: mismatched input '<EOF>' expecting {'[', '{', '(', '.', '-', '!', 'true', 'false', 'null', NUM_FLOAT, NUM_"
+  }
+]

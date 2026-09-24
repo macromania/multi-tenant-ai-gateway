@@ -1,0 +1,78 @@
+[
+  {
+    "expr": "max(sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"mock-upstream\",container=\"mock\"}[2m])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=\"mock-upstream\",container=\"mock\"}[2m])))",
+    "time": 1790273537,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1790273537,
+              "0"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max_over_time(sum(mock_in_flight)[127s:5s])",
+    "time": 1790273537,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1790273537,
+              "223"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "sum(increase(mock_requests_total{code!=\"200\"}[137s]))",
+    "time": 1790273542,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1790273542,
+              "0"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "sum(increase(mock_requests_total[137s]))",
+    "time": 1790273542,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1790273542,
+              "254967.7817426145"
+            ]
+          }
+        ]
+      }
+    }
+  }
+]

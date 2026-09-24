@@ -1,0 +1,23 @@
+[
+  {
+    "time": "2026-09-24T19:27:16Z",
+    "namespace": "agentgateway-system",
+    "object": "Pod/agentgateway-proxy-f78c8c6c7-scfz5",
+    "reason": "Created",
+    "message": "Container created"
+  },
+  {
+    "time": "2026-09-24T19:27:16Z",
+    "namespace": "agentgateway-system",
+    "object": "Pod/agentgateway-proxy-f78c8c6c7-scfz5",
+    "reason": "Started",
+    "message": "Container started"
+  },
+  {
+    "time": "2026-09-24T19:27:16Z",
+    "namespace": "agentgateway-system",
+    "object": "Pod/agentgateway-proxy-f78c8c6c7-scfz5",
+    "reason": "Pulled",
+    "message": "Container image \"cr.agentgateway.dev/agentgateway:v1.5.0\" already present on machine and can be accessed by the pod"
+  }
+]

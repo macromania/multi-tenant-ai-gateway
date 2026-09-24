@@ -1,0 +1,58 @@
+[
+  {
+    "time": "2026-09-24T20:16:18Z",
+    "namespace": "loadgen",
+    "object": "Pod/load-slow-upstream-201539-a-attack-fnfhz",
+    "reason": "Scheduled",
+    "message": "Successfully assigned loadgen/load-slow-upstream-201539-a-attack-fnfhz to mtag-shared-control-plane"
+  },
+  {
+    "time": "2026-09-24T20:16:19Z",
+    "namespace": "loadgen",
+    "object": "Pod/load-slow-upstream-201539-a-attack-fnfhz",
+    "reason": "Pulled",
+    "message": "Container image \"grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34\" already present on machine and can be accessed by the pod"
+  },
+  {
+    "time": "2026-09-24T20:16:19Z",
+    "namespace": "loadgen",
+    "object": "Pod/load-slow-upstream-201539-a-attack-fnfhz",
+    "reason": "Created",
+    "message": "Container created"
+  },
+  {
+    "time": "2026-09-24T20:16:19Z",
+    "namespace": "loadgen",
+    "object": "Pod/load-slow-upstream-201539-a-attack-fnfhz",
+    "reason": "Started",
+    "message": "Container started"
+  },
+  {
+    "time": "2026-09-24T20:16:18Z",
+    "namespace": "loadgen",
+    "object": "Job/load-slow-upstream-201539-a-attack",
+    "reason": "Suspended",
+    "message": "Job suspended"
+  },
+  {
+    "time": "2026-09-24T20:16:18Z",
+    "namespace": "loadgen",
+    "object": "Job/load-slow-upstream-201539-a-attack",
+    "reason": "SuccessfulCreate",
+    "message": "Created pod: load-slow-upstream-201539-a-attack-fnfhz"
+  },
+  {
+    "time": "2026-09-24T20:16:18Z",
+    "namespace": "loadgen",
+    "object": "Job/load-slow-upstream-201539-a-attack",
+    "reason": "Resumed",
+    "message": "Job resumed"
+  },
+  {
+    "time": "2026-09-24T20:18:52Z",
+    "namespace": "loadgen",
+    "object": "Job/load-slow-upstream-201539-a-attack",
+    "reason": "Completed",
+    "message": "Job completed"
+  }
+]

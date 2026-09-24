@@ -1,0 +1,4 @@
+
+=== CONTROLLER OUTAGE | mtag-dedicated
+
+  Target                          controller tenant-01/agw-tenant-01-agentgateway (serves 1 tenant)

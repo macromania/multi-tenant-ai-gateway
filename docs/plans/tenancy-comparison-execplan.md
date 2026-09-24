@@ -38,7 +38,8 @@ Two words have fixed meanings in this plan, in the code, and in every document i
 - [x] (2026-09-24 16:40Z) Milestone 7: `make scale`, verified with a single step in the shared cluster and a 2,4 sweep in the dedicated cluster that returned to three tenants.
 - [x] (2026-09-24 16:40Z) Milestone 8 implementation: `make results`, docs/tenancy-comparison.md, README.md and docs/local-development.md updated, `legacy-down` removed. Development runs were deleted before committing; measured runs come from the final campaign on committed code.
 - [x] (2026-09-24 17:45Z) Milestone 5 to 8 reviews: the rubber-duck reviews found 28 blocking and 5 non-blocking issues and the security reviews 2 medium issues (a restore could reactivate an offboarding tenant's key; the sweep could remove tenants it did not create), all fixed in one commit because they changed the same scripts, and verified live. Recorded in FINDINGS.md.
-- [ ] Final campaign on committed code in both clusters, `make results`, and the committed report.
+- [x] (2026-09-25 02:00Z) Final campaign on committed code (6587122) in both clusters: every calibration, scenario, failure, and scale step valid; one calibration confounded by the other node (0.55 CPU) was rerun. `make results` compares 78 of 79 records; results/report.md and every run directory are committed.
+- [x] (2026-09-25 02:40Z) Final rubber-duck and security reviews of the campaign and the report: no blocking issue and no security finding; four report and documentation points fixed, one accepted. Recorded in FINDINGS.md.
 
 
 ## Surprises & Discoveries
@@ -211,7 +212,7 @@ These facts were found while designing the plan, before any implementation. Each
   Rationale: the generator only reads run records, so changing it must not make every measurement stale; a 2-minute idle window would include the onboarding that just finished.
   Date/Author: 2026-09-24, Copilot.
 
-- Decision (final campaign): every run also records the host's 1-minute load average, as evidence rather than a gate, and the campaign waits before each step until the host has settled (a 1-minute load average below 5 on 10 CPUs for three consecutive checks). The first campaign attempt was stopped and discarded.
+- Decision (final campaign): every run also records the host's 1-minute load average, as evidence rather than a gate, and the campaign waits before each step until the host has settled (a 1-minute load average below 6 on 10 CPUs for three checks 20 seconds apart, or at most 15 minutes, because two idle clusters alone keep it near 5). The first campaign attempt was stopped and discarded.
   Rationale: host load from device management cannot be controlled from this repository, and a gate would also reject the heavy runs whose own load raises it; calibration and per-run delivery checks already reject runs whose apparatus it degraded.
   Date/Author: 2026-09-24, Copilot.
 
@@ -462,7 +463,19 @@ These facts were found while designing the plan, before any implementation. Each
 
 ## Outcomes & Retrospective
 
-Nothing has been implemented yet. At each milestone, record what now works, what remains, and what was learned.
+All eight milestones are implemented, and results/report.md holds the comparison from one campaign on committed code. Both clusters are built by `make up`, hold the working set, and pass the health checks. The report is the input to the architecture decision; this summary only points at what the data shows, and the report's caveats apply to every line.
+
+What the campaign measured, shared then dedicated:
+
+- Blast radius. Killing the proxy failed all three tenants for 0.8 to 1.0 seconds in the shared cluster and only tenant-01, for 2.4 seconds, in the dedicated cluster. Overloading the proxy's memory OOM-killed it in both designs; in the shared cluster every tenant lost about 28 to 30 seconds, and in the dedicated cluster only tenant-01 did (32 seconds).
+- Noisy neighbour. A 2,000-request-per-second flood and 1,500 slow requests from tenant-01 caused no failure or slow request for the other tenants in either design, on this hardware and at these rates.
+- Configuration mistakes. An invalid limit condition was accepted as PartiallyValid in both designs and silently removed only tenant-01's limit. A controller outage froze every tenant's configuration changes in the shared cluster, and only tenant-01's in the dedicated cluster; traffic kept flowing in both.
+- Leakage. A duplicated key hash leaked in both designs (628 and 635 requests); a wrong provider Secret value leaked in both (302 and 296 requests in that half). A Secret reference to another tenant's Secret leaked in the shared cluster (301 requests) and failed closed with 500 in the dedicated cluster, because the reference cannot cross namespaces. A routing policy that trusts a client header leaked in the shared cluster (307 requests in that half); the dedicated design has no such policy.
+- Cost and speed. The gateway added a median of 1 ms at p50, p95, and p99 in the shared cluster and 0 to 1 ms in the dedicated cluster. A tenant was usable about 2.4 seconds after `tenant-add` started in the shared cluster and about 9.7 seconds in the dedicated cluster, where its own Foundry connection was ready about 18 seconds after the start; removal was refused by authentication within about 0.3 seconds in both, and cleaned up after about 8 and 14 seconds. At 10 tenants, the shared gateway used 2 pods, 0.2 CPU and 256 MiB reserved, and about 67 MiB; the dedicated gateways used 20 pods, 2 CPU and 2,560 MiB reserved, and about 510 MiB.
+
+What was learned about the apparatus: nearly every early measurement problem came from the tooling rather than the designs. Bash 3.2 behaviours (brace expansion inside `"$(...)"` arguments, `set -e` in substitutions and conditions, subshell EXIT traps), jq value parameters, the kubelet's restart back-off, k6 ending in-flight requests at a stop, and host load from device management each produced plausible-looking but wrong numbers until a validity check caught them. The reviews after each milestone found most of these; the rule that every figure must prove its own coverage (telemetry per pod, delivery per stream, contention per run) is what made the final campaign trustworthy.
+
+What remains open: shared provider quota exhaustion (parked), version and CRD upgrades (out of scope), more than one proxy replica, repeated runs for variance, and a machine without competing host load.
 
 
 ## Context and Orientation
@@ -736,7 +749,22 @@ Expected shape of a failure summary:
 
 The help menu sections, in order: CLUSTERS (up, status, down), TENANTS (tenant-add, tenant-limit, tenant-remove, tenants, tenant-objects, gateway-config), TRAFFIC (prompt, load), EXPERIMENTS (calibrate, scenario, break, restore, scale), OBSERVABILITY (grafana, prometheus, dashboard, logs, k9s, gateway-forward), RESULTS (results), FOUNDRY MODEL (foundry-register, foundry-regions, foundry-models, foundry-up, foundry-status, gateway-configure, endpoints), DIAGNOSTICS (doctor, check), CLEANUP (down CONFIRM=1, tenant-remove CONFIRM=1, foundry-down CONFIRM=1), then a GETTING STARTED information block and a DOCUMENTATION block that names docs/tenancy-comparison.md and docs/local-development.md as plain paths.
 
-Update this section with real transcripts as milestones complete.
+A real transcript from the final campaign (`make break CLUSTER=both FAILURE=proxy-crash`, shared cluster):
+
+    === PROXY CRASH | mtag-shared ================================
+
+      Target                          proxy agentgateway-system/agentgateway-proxy (serves 3 tenants)
+      Invocation check                [OK] the killed container exited with code 137; the same pod restarted it (restartCount 9)
+      Validity                        valid
+      probe-tenant-01                 affected, 1 episodes, 801 ms failed, statuses 0 x4, 8 slow (over 545 ms, max 2190 ms), healthy 1274 ms after the trigger
+      probe-tenant-02                 affected, 2 episodes, 1002 ms failed, statuses 0 x5, 7 slow (over 545 ms, max 2191 ms), healthy 2075 ms after the trigger
+      probe-tenant-03                 affected, 1 episodes, 801 ms failed, statuses 0 x4, 8 slow (over 545 ms, max 2190 ms), healthy 1274 ms after the trigger
+      Leaks                           0
+      Recovery                        [OK] restore took 7786 ms; health confirmed 12930 ms after it began (25 verified probes per tenant once it finished)
+      Run record                      results/shared/20260924T192637Z-failure-proxy-crash
+      Grafana                         http://127.0.0.1:38484/d/mtag-tenants?from=...&to=...
+
+The final campaign ran these commands in order, each waiting for the host to settle first: `make calibrate CLUSTER=both`, `make scenario CLUSTER=both NAME=separation`, `NAME=rollout`, `NAME=foundry-smoke CONFIRM=1`, `NAME=latency`, `make break CLUSTER=both FAILURE=<each of the ten>`, and `make scale CLUSTER=both TENANTS=1,5,10 CONFIRM=1`, then `make results`.
 
 
 ## Validation and Acceptance
@@ -748,6 +776,8 @@ Both clusters exist, built only through Make targets, and `make status CLUSTER=b
 Each live check must prove the mechanism ran, not only that a command succeeded: the proxy container restarted with exit code 137, the invalid expression is in the applied object, the two key entries share a hash, 429s appeared during the flood, in-flight requests rose during the slow-upstream test, a new OOM termination appeared (or the run says it did not), the controller had zero ready replicas, the old mock key was rejected, the backend referenced the wrong Secret, and the probes sent the forged header.
 
 Before any run that will be used in the report, commit the implementation, so that run.json records inputs that match the commit. Results can be committed afterwards without affecting any run's validity.
+
+Evidence (final campaign on commit 6587122, 2026-09-24 21:57 to 2026-09-25 01:57 local time, plus one calibration rerun at 01:58): both clusters built by `make up` and back at tenant-01 to tenant-03, passing the health checks after the sweep; all eight calibrations valid (the dedicated memory calibration on its rerun, after the first was confounded at 0.55 CPU); separation passed every check in both clusters with zero probe leaks and both leak-detector controls firing on 101 of 101 requests; latency differences with their ranges in both; all ten failures valid in both clusters with passing invocation checks (proxy-memory produced a real OOM kill in both); the 1, 5, 10 sweep valid at every step in both; Foundry answered HTTP 200 for every tenant in both; `make results` wrote results/report.md from 78 usable records of 79, every comparison pairing runs with matching configuration fingerprints.
 
 
 ## Idempotence and Recovery

@@ -253,3 +253,26 @@ Reviewed commit `e9f3bdc`. Fixes are in the commit "Fix the Milestone 5 to 8 rev
 ### Security review
 
 No findings.
+
+
+## Final campaign and report
+
+Reviewed commit `6587122` (host load recorded in every run) and the 79 run records and report from
+the final campaign on that commit. Report and documentation fixes are in the commit that adds the
+results; they change only `scripts/results.sh`, `scripts/report.jq`, and documents, which are outside
+the input fingerprint, so every run stays current.
+
+### Rubber-duck review (5 findings)
+
+| # | Severity | Finding | Resolution | Status |
+| --- | --- | --- | --- | --- |
+| 1 | Non-blocking | The contention summary is computed after the sampler shell is killed but before its last `docker stats` call is reaped, so 14 records count one sample fewer than their sample file (two rounded means differ by 0.02); no exclusion changes. | Accepted for this campaign, because fixing the sampler changes the input fingerprint and would make every run stale. A later campaign should reap the sampler's children before summarising. | Accepted |
+| 2 | Non-blocking | The documents called the settle wait a guarantee, although it gives up after 15 minutes and some runs averaged a host load of 11 to 16; a valid run does not prove unbiased timings. | The guide and the report describe the wait as best-effort, separate apparatus validity from timing comparability, note single-run figures, and show host load mean and maximum beside every timing (latency, rollout, lifecycle, footprint, failures). | Fixed |
+| 3 | Non-blocking | The retrospective added the dedicated Foundry connection time to the time to become usable, although both are measured from the same start. | The retrospective says the Foundry connection was ready about 18 seconds after the start. | Fixed |
+| 4 | Non-blocking | Lifecycle and Foundry records had no Grafana links, and lifecycle rows did not link the runs behind them. | The report builds a Grafana link from each record's start time and duration, and lists every run behind each lifecycle row with its links and host load. | Fixed |
+| 5 | Non-blocking | "Failed statuses" showing `200×629` could be read as HTTP errors or downtime. | The column is "Statuses of failed or leaked probes", and the report explains that failed time includes leaks, which can carry status 200. | Fixed |
+
+### Security review
+
+No findings: nothing under `results/` holds a key, a key hash, an Authorization header, or other
+credential; the 64-character hex values are image digests, container IDs, and fingerprints.

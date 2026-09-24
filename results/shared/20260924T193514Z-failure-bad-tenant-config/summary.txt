@@ -1,0 +1,4 @@
+
+=== BAD TENANT CONFIG | mtag-shared
+
+  Target                          token limit policy agentgateway-system/tenant-limits (serves 3 tenants)

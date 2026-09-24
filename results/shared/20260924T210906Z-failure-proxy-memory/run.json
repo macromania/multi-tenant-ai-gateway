@@ -1,0 +1,391 @@
+{
+  "commit": "6587122fdd95cd5f2fa46b804a12b98527ffb777",
+  "inputs_committed": true,
+  "input_fingerprint": "8663a35bd91230409cf9397a488c78c80b6947b87917df8bc26411dfe0a70a2e",
+  "cluster": "shared",
+  "comparison_id": "20260924T210859Z-51863",
+  "versions": {
+    "agentgateway": "v1.5.0",
+    "kind": "0.31.0",
+    "k6": "grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34",
+    "python": "python:3.13-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0",
+    "kube_prometheus_stack": "91.5.1",
+    "gateway_api": "1.6.0"
+  },
+  "inputs_changed_during_run": false,
+  "contention": {
+    "other_node": "mtag-dedicated-control-plane",
+    "present": true,
+    "samples": 37,
+    "mean_cpu": 0.24,
+    "limit_cpu": 0.5,
+    "confounded": false,
+    "host_load": {
+      "samples": 37,
+      "cpus": 10,
+      "mean_1m": 6.4,
+      "max_1m": 7.52
+    }
+  },
+  "kind": "failure",
+  "name": "proxy-memory",
+  "run_id": "proxy-memory-210906",
+  "clock": "kind-node",
+  "started_ms": 1790284154126,
+  "ended_ms": 1790284380512,
+  "config": {
+    "failure": "proxy-memory",
+    "cause": "tenant-01",
+    "working_set": [
+      "tenant-01",
+      "tenant-02",
+      "tenant-03"
+    ],
+    "baseline_s": 30,
+    "observe_s": 120,
+    "probe_rate": 5,
+    "attack_profile": {
+      "rate": 50,
+      "prompt_chars": 262144,
+      "max_completion_tokens": 16,
+      "latency_ms": 30000,
+      "timeout": "60s",
+      "job_memory": "6Gi",
+      "raised_limit": true
+    },
+    "raise_limit": false,
+    "keep": false,
+    "mock_replicas": 2,
+    "design": "shared",
+    "apparatus": {
+      "tenant_count": 3,
+      "limits": {
+        "tenant-01": 20000,
+        "tenant-02": 20000,
+        "tenant-03": 20000
+      },
+      "mock_replicas": 2
+    }
+  },
+  "target": {
+    "component": "proxy agentgateway-system/agentgateway-proxy",
+    "serves": 3
+  },
+  "marks": {
+    "probe_start": 1790284154126,
+    "trigger_start": 1790284185142,
+    "trigger_end": 1790284186707,
+    "half": null,
+    "observe_end": 1790284360826,
+    "restore_start": 1790284361293,
+    "restore_end": 1790284369929,
+    "end": 1790284380512
+  },
+  "invocation": {
+    "ok": true,
+    "evidence": "the proxy was OOM-killed at 2026-09-24T21:11:35Z; maximum sampled working set 406 MiB"
+  },
+  "notes": {
+    "restart_history": {
+      "pod": "agentgateway-proxy-f78c8c6c7-scfz5",
+      "uid": "d5e4c891-1e80-4747-af49-2c55b4a16e05",
+      "restarts": 9,
+      "started_at": "2026-09-24T19:27:16Z",
+      "last": {
+        "containerID": "containerd://de98c467e9f094c15364ae37967e291902f178f1eadfea2b2df134fd89180ed5",
+        "exitCode": 137,
+        "finishedAt": "2026-09-24T19:27:15Z",
+        "reason": "Error",
+        "startedAt": "2026-09-24T15:18:47Z"
+      }
+    },
+    "before": {
+      "pod": "agentgateway-proxy-f78c8c6c7-scfz5",
+      "uid": "d5e4c891-1e80-4747-af49-2c55b4a16e05",
+      "restarts": 9,
+      "started_at": "2026-09-24T19:27:16Z",
+      "last": {
+        "containerID": "containerd://de98c467e9f094c15364ae37967e291902f178f1eadfea2b2df134fd89180ed5",
+        "exitCode": 137,
+        "finishedAt": "2026-09-24T19:27:15Z",
+        "reason": "Error",
+        "startedAt": "2026-09-24T15:18:47Z"
+      }
+    },
+    "proxy_max_sampled_working_set_bytes": 426115072
+  },
+  "impact": [
+    {
+      "stream": "probe-tenant-01",
+      "tenant": "tenant-01",
+      "cause": false,
+      "requests": 1140,
+      "censored": 1,
+      "baseline": {
+        "requests": 160,
+        "failed": 0,
+        "p95_ms": 107
+      },
+      "observe": {
+        "requests": 881,
+        "failed": 138,
+        "p95_ms": 4200,
+        "expected_429": 0
+      },
+      "recover": {
+        "requests": 96,
+        "failed": 0
+      },
+      "statuses": {
+        "0": 138
+      },
+      "leaks": 0,
+      "unverifiable": 0,
+      "slow": {
+        "count": 80,
+        "threshold_ms": 535,
+        "max_ms": 7310
+      },
+      "any_impact": true,
+      "material_impact": true,
+      "episodes": [
+        {
+          "start_ms": 38677,
+          "duration_ms": 799
+        },
+        {
+          "start_ms": 74479,
+          "duration_ms": 6599
+        },
+        {
+          "start_ms": 110077,
+          "duration_ms": 20200
+        }
+      ],
+      "failed_time_ms": 27598,
+      "recovery_after_trigger_ms": 130277,
+      "recovery_after_restore_ms": 127
+    },
+    {
+      "stream": "probe-tenant-02",
+      "tenant": "tenant-02",
+      "cause": false,
+      "requests": 1140,
+      "censored": 1,
+      "baseline": {
+        "requests": 160,
+        "failed": 0,
+        "p95_ms": 108
+      },
+      "observe": {
+        "requests": 881,
+        "failed": 142,
+        "p95_ms": 3224,
+        "expected_429": 0
+      },
+      "recover": {
+        "requests": 96,
+        "failed": 0
+      },
+      "statuses": {
+        "0": 142
+      },
+      "leaks": 0,
+      "unverifiable": 0,
+      "slow": {
+        "count": 76,
+        "threshold_ms": 540,
+        "max_ms": 7308
+      },
+      "any_impact": true,
+      "material_impact": true,
+      "episodes": [
+        {
+          "start_ms": 38675,
+          "duration_ms": 800
+        },
+        {
+          "start_ms": 74474,
+          "duration_ms": 6600
+        },
+        {
+          "start_ms": 84274,
+          "duration_ms": 200
+        },
+        {
+          "start_ms": 110074,
+          "duration_ms": 20401
+        },
+        {
+          "start_ms": 131275,
+          "duration_ms": 199
+        },
+        {
+          "start_ms": 136274,
+          "duration_ms": 200
+        }
+      ],
+      "failed_time_ms": 28400,
+      "recovery_after_trigger_ms": 136474,
+      "recovery_after_restore_ms": 123
+    },
+    {
+      "stream": "probe-tenant-03",
+      "tenant": "tenant-03",
+      "cause": false,
+      "requests": 1140,
+      "censored": 1,
+      "baseline": {
+        "requests": 160,
+        "failed": 0,
+        "p95_ms": 108
+      },
+      "observe": {
+        "requests": 881,
+        "failed": 150,
+        "p95_ms": 3200,
+        "expected_429": 0
+      },
+      "recover": {
+        "requests": 96,
+        "failed": 0
+      },
+      "statuses": {
+        "0": 150
+      },
+      "leaks": 0,
+      "unverifiable": 0,
+      "slow": {
+        "count": 68,
+        "threshold_ms": 540,
+        "max_ms": 7308
+      },
+      "any_impact": true,
+      "material_impact": true,
+      "episodes": [
+        {
+          "start_ms": 38673,
+          "duration_ms": 801
+        },
+        {
+          "start_ms": 40073,
+          "duration_ms": 200
+        },
+        {
+          "start_ms": 74474,
+          "duration_ms": 6600
+        },
+        {
+          "start_ms": 81274,
+          "duration_ms": 200
+        },
+        {
+          "start_ms": 82273,
+          "duration_ms": 200
+        },
+        {
+          "start_ms": 83274,
+          "duration_ms": 200
+        },
+        {
+          "start_ms": 85274,
+          "duration_ms": 200
+        },
+        {
+          "start_ms": 86274,
+          "duration_ms": 201
+        },
+        {
+          "start_ms": 87273,
+          "duration_ms": 203
+        },
+        {
+          "start_ms": 110073,
+          "duration_ms": 20202
+        },
+        {
+          "start_ms": 132274,
+          "duration_ms": 199
+        },
+        {
+          "start_ms": 133274,
+          "duration_ms": 200
+        },
+        {
+          "start_ms": 134274,
+          "duration_ms": 200
+        },
+        {
+          "start_ms": 135274,
+          "duration_ms": 201
+        },
+        {
+          "start_ms": 137274,
+          "duration_ms": 201
+        }
+      ],
+      "failed_time_ms": 30008,
+      "recovery_after_trigger_ms": 137475,
+      "recovery_after_restore_ms": 122
+    }
+  ],
+  "extra_streams": [],
+  "halves": null,
+  "leaks_total": 0,
+  "recovery": {
+    "restored": true,
+    "healthy": true,
+    "restore_ms": 8636,
+    "healthy_after_restore_ms": 14010,
+    "recovery_checks_passed": true
+  },
+  "validity": {
+    "valid": true,
+    "reasons": [],
+    "other_node_cpu": 0.24,
+    "confounded": false
+  },
+  "resources": {
+    "max_cpu_cores": [
+      {
+        "namespace": "agentgateway-system",
+        "pod": "agentgateway-proxy-f78c8c6c7-scfz5",
+        "value": 0.048
+      },
+      {
+        "namespace": "agentgateway-system",
+        "pod": "agentgateway-5c8c69f949-7bfqp",
+        "value": 0.003
+      }
+    ],
+    "max_working_set_mib": [
+      {
+        "namespace": "agentgateway-system",
+        "pod": "agentgateway-proxy-f78c8c6c7-scfz5",
+        "value": 406
+      },
+      {
+        "namespace": "agentgateway-system",
+        "pod": "agentgateway-5c8c69f949-7bfqp",
+        "value": 46
+      }
+    ],
+    "max_throttled_ratio": [
+      {
+        "namespace": "agentgateway-system",
+        "pod": "agentgateway-proxy-f78c8c6c7-scfz5",
+        "value": 0
+      },
+      {
+        "namespace": "agentgateway-system",
+        "pod": "agentgateway-5c8c69f949-7bfqp",
+        "value": 0
+      }
+    ]
+  },
+  "grafana": {
+    "tenants": "http://127.0.0.1:38484/d/mtag-tenants?from=1790284154126&to=1790284380512&var-tenant=All",
+    "agentgateway": "http://127.0.0.1:38484/d/agentgateway?from=1790284154126&to=1790284380512"
+  },
+  "config_fingerprint": "fe0c648761e2eaef8d07a2d35e79163584f4197038d771cc63bd80938bd01398"
+}

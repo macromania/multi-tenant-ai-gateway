@@ -1,0 +1,128 @@
+[
+  {
+    "expr": "max by (namespace, pod) (max_over_time(rate(container_cpu_usage_seconds_total{namespace=~\"agentgateway-system|tenant-[0-9]+\",container!=\"\",container!=\"POD\"}[1m])[186s:15s]))",
+    "time": 1790280513,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {
+              "namespace": "agentgateway-system",
+              "pod": "agentgateway-5c8c69f949-8hmmx"
+            },
+            "value": [
+              1790280513,
+              "0.002255467887657962"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "agentgateway-system",
+              "pod": "agentgateway-proxy-f78c8c6c7-scfz5"
+            },
+            "value": [
+              1790280513,
+              "0.28113798771520015"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max by (namespace, pod) (max_over_time(container_memory_working_set_bytes{namespace=~\"agentgateway-system|tenant-[0-9]+\",container!=\"\",container!=\"POD\"}[186s]))",
+    "time": 1790280513,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {
+              "namespace": "agentgateway-system",
+              "pod": "agentgateway-5c8c69f949-8hmmx"
+            },
+            "value": [
+              1790280513,
+              "50634752"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "agentgateway-system",
+              "pod": "agentgateway-proxy-f78c8c6c7-scfz5"
+            },
+            "value": [
+              1790280513,
+              "107175936"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max by (namespace, pod) (max_over_time((rate(container_cpu_cfs_throttled_periods_total{namespace=~\"agentgateway-system|tenant-[0-9]+\",container!=\"\"}[1m]) / rate(container_cpu_cfs_periods_total{namespace=~\"agentgateway-system|tenant-[0-9]+\",container!=\"\"}[1m]))[186s:15s]))",
+    "time": 1790280513,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {
+              "namespace": "agentgateway-system",
+              "pod": "agentgateway-5c8c69f949-8hmmx"
+            },
+            "value": [
+              1790280513,
+              "0"
+            ]
+          },
+          {
+            "metric": {
+              "namespace": "agentgateway-system",
+              "pod": "agentgateway-proxy-f78c8c6c7-scfz5"
+            },
+            "value": [
+              1790280513,
+              "0"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max(sum by (pod) (increase(container_cpu_cfs_throttled_periods_total{namespace=\"mock-upstream\",container=\"mock\"}[127s])) / sum by (pod) (increase(container_cpu_cfs_periods_total{namespace=\"mock-upstream\",container=\"mock\"}[127s])))",
+    "time": 1790280495,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {},
+            "value": [
+              1790280495,
+              "0"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "expr": "max(max_over_time(kube_pod_container_status_terminated_reason{namespace=\"loadgen\",reason=\"OOMKilled\"}[186s]))",
+    "time": 1790280513,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": []
+      }
+    }
+  }
+]

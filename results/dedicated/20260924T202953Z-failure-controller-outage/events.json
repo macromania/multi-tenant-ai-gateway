@@ -1,0 +1,72 @@
+[
+  {
+    "time": "2026-09-24T20:33:18Z",
+    "namespace": "tenant-01",
+    "object": "Lease/agentgateway-agentgateway",
+    "reason": "LeaderElection",
+    "message": "agw-tenant-01-agentgateway-dfd9dbb6c-ts6dk_9d1602ec-3775-4c58-84f6-c989b9e639a3 became leader"
+  },
+  {
+    "time": "2026-09-24T20:30:30Z",
+    "namespace": "tenant-01",
+    "object": "Pod/agw-tenant-01-agentgateway-dfd9dbb6c-76mtg",
+    "reason": "Killing",
+    "message": "Stopping container controller"
+  },
+  {
+    "time": "2026-09-24T20:33:02Z",
+    "namespace": "tenant-01",
+    "object": "Pod/agw-tenant-01-agentgateway-dfd9dbb6c-ts6dk",
+    "reason": "Scheduled",
+    "message": "Successfully assigned tenant-01/agw-tenant-01-agentgateway-dfd9dbb6c-ts6dk to mtag-dedicated-control-plane"
+  },
+  {
+    "time": "2026-09-24T20:33:02Z",
+    "namespace": "tenant-01",
+    "object": "Pod/agw-tenant-01-agentgateway-dfd9dbb6c-ts6dk",
+    "reason": "Pulled",
+    "message": "Container image \"cr.agentgateway.dev/controller:v1.5.0\" already present on machine and can be accessed by the pod"
+  },
+  {
+    "time": "2026-09-24T20:33:02Z",
+    "namespace": "tenant-01",
+    "object": "Pod/agw-tenant-01-agentgateway-dfd9dbb6c-ts6dk",
+    "reason": "Created",
+    "message": "Container created"
+  },
+  {
+    "time": "2026-09-24T20:33:02Z",
+    "namespace": "tenant-01",
+    "object": "Pod/agw-tenant-01-agentgateway-dfd9dbb6c-ts6dk",
+    "reason": "Started",
+    "message": "Container started"
+  },
+  {
+    "time": "2026-09-24T20:30:30Z",
+    "namespace": "tenant-01",
+    "object": "ReplicaSet/agw-tenant-01-agentgateway-dfd9dbb6c",
+    "reason": "SuccessfulDelete",
+    "message": "Deleted pod: agw-tenant-01-agentgateway-dfd9dbb6c-76mtg"
+  },
+  {
+    "time": "2026-09-24T20:33:02Z",
+    "namespace": "tenant-01",
+    "object": "ReplicaSet/agw-tenant-01-agentgateway-dfd9dbb6c",
+    "reason": "SuccessfulCreate",
+    "message": "Created pod: agw-tenant-01-agentgateway-dfd9dbb6c-ts6dk"
+  },
+  {
+    "time": "2026-09-24T20:33:01Z",
+    "namespace": "tenant-01",
+    "object": "Deployment/agw-tenant-01-agentgateway",
+    "reason": "ScalingReplicaSet",
+    "message": "Scaled up replica set agw-tenant-01-agentgateway-dfd9dbb6c from 0 to 1"
+  },
+  {
+    "time": "2026-09-24T20:30:30Z",
+    "namespace": "tenant-01",
+    "object": "Deployment/agw-tenant-01-agentgateway",
+    "reason": "ScalingReplicaSet",
+    "message": "Scaled down replica set agw-tenant-01-agentgateway-dfd9dbb6c from 1 to 0"
+  }
+]

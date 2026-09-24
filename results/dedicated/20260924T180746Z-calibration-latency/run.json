@@ -1,0 +1,181 @@
+{
+  "commit": "6587122fdd95cd5f2fa46b804a12b98527ffb777",
+  "inputs_committed": true,
+  "input_fingerprint": "8663a35bd91230409cf9397a488c78c80b6947b87917df8bc26411dfe0a70a2e",
+  "cluster": "dedicated",
+  "comparison_id": "20260924T175728Z-64158",
+  "versions": {
+    "agentgateway": "v1.5.0",
+    "kind": "0.31.0",
+    "k6": "grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34",
+    "python": "python:3.13-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0",
+    "kube_prometheus_stack": "91.5.1",
+    "gateway_api": "1.6.0"
+  },
+  "inputs_changed_during_run": false,
+  "contention": {
+    "other_node": "mtag-shared-control-plane",
+    "present": true,
+    "samples": 21,
+    "mean_cpu": 0.17,
+    "limit_cpu": 0.5,
+    "confounded": false,
+    "host_load": {
+      "samples": 21,
+      "cpus": 10,
+      "mean_1m": 5.07,
+      "max_1m": 6.29
+    }
+  },
+  "kind": "calibration",
+  "name": "latency",
+  "run_id": "latency-180746",
+  "clock": "kind-node",
+  "started_ms": 1790273270580,
+  "ended_ms": 1790273396355,
+  "config": {
+    "profile": {
+      "rate": 50,
+      "prompt_chars": 40,
+      "max_completion_tokens": 16,
+      "latency_ms": 100,
+      "raised_limit": true
+    },
+    "target": "mock",
+    "duration_s": 120,
+    "mock_replicas": 2,
+    "design": "dedicated",
+    "apparatus": {
+      "tenant_count": 3,
+      "limits": {
+        "tenant-01": 20000,
+        "tenant-02": 20000,
+        "tenant-03": 20000
+      },
+      "mock_replicas": 2
+    }
+  },
+  "attack": {
+    "tenant": "tenant-01",
+    "role": "attack",
+    "target_rate": 50,
+    "duration": "120s",
+    "recorded": false,
+    "requests": 6000,
+    "iterations": 6000,
+    "dropped_iterations": 0,
+    "failed_rate": 0,
+    "duration_ms": {
+      "p(50)": 101.91,
+      "p(95)": 104.10594855000001,
+      "p(99)": 106.04565991,
+      "max": 119.981542
+    },
+    "verdicts": {
+      "verified": 6000,
+      "leak": 0,
+      "blocked": 0,
+      "unverifiable": 0,
+      "failed": 0
+    },
+    "statuses": {
+      "200": 6000
+    }
+  },
+  "probes": [
+    {
+      "tenant": "tenant-01",
+      "role": "probe",
+      "target_rate": 5,
+      "duration": "150s",
+      "recorded": true,
+      "requests": 636,
+      "iterations": 636,
+      "dropped_iterations": 0,
+      "failed_rate": 0,
+      "duration_ms": {
+        "p(95)": 106.25438575,
+        "p(99)": 108.77388694999999,
+        "max": 113.705041,
+        "p(50)": 102.84281250000001
+      },
+      "verdicts": {
+        "verified": 636,
+        "leak": 0,
+        "blocked": 0,
+        "unverifiable": 0,
+        "failed": 0
+      },
+      "statuses": {
+        "200": 636
+      }
+    },
+    {
+      "tenant": "tenant-02",
+      "role": "probe",
+      "target_rate": 5,
+      "duration": "150s",
+      "recorded": true,
+      "requests": 636,
+      "iterations": 636,
+      "dropped_iterations": 0,
+      "failed_rate": 0,
+      "duration_ms": {
+        "p(95)": 105.97597875,
+        "p(99)": 108.1542193,
+        "max": 113.792333,
+        "p(50)": 102.475542
+      },
+      "verdicts": {
+        "verified": 636,
+        "leak": 0,
+        "blocked": 0,
+        "unverifiable": 0,
+        "failed": 0
+      },
+      "statuses": {
+        "200": 636
+      }
+    },
+    {
+      "tenant": "tenant-03",
+      "role": "probe",
+      "target_rate": 5,
+      "duration": "150s",
+      "recorded": true,
+      "requests": 636,
+      "iterations": 636,
+      "dropped_iterations": 0,
+      "failed_rate": 0,
+      "duration_ms": {
+        "p(99)": 108.37238925,
+        "max": 113.290208,
+        "p(50)": 102.818313,
+        "p(95)": 106.3983645
+      },
+      "verdicts": {
+        "verified": 636,
+        "leak": 0,
+        "blocked": 0,
+        "unverifiable": 0,
+        "failed": 0
+      },
+      "statuses": {
+        "200": 636
+      }
+    }
+  ],
+  "mock": {
+    "max_throttled_ratio": 0,
+    "max_in_flight": 8,
+    "errors": 0,
+    "requests": 8212.139340130896
+  },
+  "valid": true,
+  "reasons": [],
+  "grafana": {
+    "tenants": "http://127.0.0.1:38494/d/mtag-tenants?from=1790273270580&to=1790273396355&var-tenant=All",
+    "agentgateway": "http://127.0.0.1:38494/d/agentgateway?from=1790273270580&to=1790273396355"
+  },
+  "config_fingerprint": "2bb8b2d8e76b265f313e4e69faac9aa6d5a53b9895eed4daaf81ad80b294921b"
+}

@@ -1,0 +1,66 @@
+{
+  "commit": "6587122fdd95cd5f2fa46b804a12b98527ffb777",
+  "inputs_committed": true,
+  "input_fingerprint": "8663a35bd91230409cf9397a488c78c80b6947b87917df8bc26411dfe0a70a2e",
+  "cluster": "shared",
+  "comparison_id": "20260924T184755Z-14906",
+  "versions": {
+    "agentgateway": "v1.5.0",
+    "kind": "0.31.0",
+    "k6": "grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34",
+    "python": "python:3.13-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0",
+    "kube_prometheus_stack": "91.5.1",
+    "gateway_api": "1.6.0"
+  },
+  "inputs_changed_during_run": false,
+  "contention": {
+    "other_node": "mtag-dedicated-control-plane",
+    "present": true,
+    "samples": 2,
+    "mean_cpu": 0.43,
+    "limit_cpu": 0.5,
+    "confounded": false,
+    "host_load": {
+      "samples": 2,
+      "cpus": 10,
+      "mean_1m": 5.37,
+      "max_1m": 5.59
+    }
+  },
+  "kind": "scenario",
+  "name": "foundry-smoke",
+  "run_id": "foundry-smoke-184802",
+  "clock": "kind-node",
+  "started_ms": 1790275683251,
+  "ended_ms": 1790275695938,
+  "config": {
+    "scenario": "foundry-smoke",
+    "design": "shared",
+    "max_completion_tokens": 32,
+    "apparatus": {
+      "tenant_count": 3,
+      "limits": {
+        "tenant-01": 20000,
+        "tenant-02": 20000,
+        "tenant-03": 20000
+      },
+      "mock_replicas": 2
+    }
+  },
+  "results": [
+    {
+      "tenant": "tenant-01",
+      "status": 200
+    },
+    {
+      "tenant": "tenant-02",
+      "status": 200
+    },
+    {
+      "tenant": "tenant-03",
+      "status": 200
+    }
+  ],
+  "passed": true,
+  "config_fingerprint": "f40300e342193017c1171c06cd01c412a07aa3a49d44af0ddf83d7dd610070bb"
+}

@@ -1,0 +1,130 @@
+{
+  "commit": "6587122fdd95cd5f2fa46b804a12b98527ffb777",
+  "inputs_committed": true,
+  "input_fingerprint": "8663a35bd91230409cf9397a488c78c80b6947b87917df8bc26411dfe0a70a2e",
+  "cluster": "shared",
+  "comparison_id": "20260924T184134Z-4866",
+  "versions": {
+    "agentgateway": "v1.5.0",
+    "kind": "0.31.0",
+    "k6": "grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34",
+    "python": "python:3.13-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0",
+    "kube_prometheus_stack": "91.5.1",
+    "gateway_api": "1.6.0"
+  },
+  "inputs_changed_during_run": false,
+  "contention": {
+    "other_node": "mtag-dedicated-control-plane",
+    "present": true,
+    "samples": 8,
+    "mean_cpu": 0.23,
+    "limit_cpu": 0.5,
+    "confounded": false,
+    "host_load": {
+      "samples": 8,
+      "cpus": 10,
+      "mean_1m": 5.8,
+      "max_1m": 6.38
+    }
+  },
+  "kind": "scenario",
+  "name": "separation",
+  "run_id": "separation-184141",
+  "clock": "kind-node",
+  "started_ms": 1790275306491,
+  "ended_ms": 1790275333853,
+  "config": {
+    "scenario": "separation",
+    "working_set": 3,
+    "probe_rate": 5,
+    "design": "shared",
+    "apparatus": {
+      "tenant_count": 3,
+      "limits": {
+        "tenant-01": 20000,
+        "tenant-02": 20000,
+        "tenant-03": 20000
+      },
+      "mock_replicas": 2
+    }
+  },
+  "checks": [
+    {
+      "name": "No key is refused (agentgateway-system)",
+      "passed": true,
+      "evidence": "HTTP 401"
+    },
+    {
+      "name": "An invalid key is refused (agentgateway-system)",
+      "passed": true,
+      "evidence": "HTTP 401"
+    },
+    {
+      "name": "tenant-01 is served with its own provider key",
+      "passed": true,
+      "evidence": "HTTP 200, key owner tenant-01"
+    },
+    {
+      "name": "tenant-02 is served with its own provider key",
+      "passed": true,
+      "evidence": "HTTP 200, key owner tenant-02"
+    },
+    {
+      "name": "tenant-03 is served with its own provider key",
+      "passed": true,
+      "evidence": "HTTP 200, key owner tenant-03"
+    },
+    {
+      "name": "A forged x-tenant header does not reach tenant-02",
+      "passed": true,
+      "evidence": "HTTP 200, key owner tenant-01"
+    },
+    {
+      "name": "tenant-01 is limited after spending its budget",
+      "passed": true,
+      "evidence": "429 on request 1 at 100 tokens per minute"
+    },
+    {
+      "name": "tenant-02 is not limited by tenant-01's budget",
+      "passed": true,
+      "evidence": "HTTP 200"
+    },
+    {
+      "name": "tenant-03 is not limited by tenant-01's budget",
+      "passed": true,
+      "evidence": "HTTP 200"
+    },
+    {
+      "name": "No probe reached another tenant's provider key",
+      "passed": true,
+      "evidence": "432 probe requests, 0 leaks"
+    },
+    {
+      "name": "The leak detector flags a wrong key owner",
+      "passed": true,
+      "evidence": "101 control requests, 101 flagged"
+    },
+    {
+      "name": "The leak detector flags a wrong echoed probe ID",
+      "passed": true,
+      "evidence": "101 control requests, 101 flagged"
+    },
+    {
+      "name": "Gateway metrics attribute traffic to each tenant",
+      "passed": true,
+      "evidence": "tenant-01=164, tenant-02=163, tenant-03=163"
+    },
+    {
+      "name": "Recorded: the shared controller can list Secrets outside its namespace",
+      "passed": true,
+      "evidence": "yes"
+    }
+  ],
+  "passed": true,
+  "leaks": 0,
+  "grafana": {
+    "tenants": "http://127.0.0.1:38484/d/mtag-tenants?from=1790275306491&to=1790275333853&var-tenant=All",
+    "agentgateway": "http://127.0.0.1:38484/d/agentgateway?from=1790275306491&to=1790275333853"
+  },
+  "config_fingerprint": "574efb2d02709db8c454155d336430e6c22ce57480adcdb38577b3d4edbc8315"
+}

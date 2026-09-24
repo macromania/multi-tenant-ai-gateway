@@ -1,0 +1,70 @@
+{
+  "commit": "6587122fdd95cd5f2fa46b804a12b98527ffb777",
+  "inputs_committed": true,
+  "input_fingerprint": "8663a35bd91230409cf9397a488c78c80b6947b87917df8bc26411dfe0a70a2e",
+  "cluster": "dedicated",
+  "comparison_id": "20260924T212116Z-63548",
+  "versions": {
+    "agentgateway": "v1.5.0",
+    "kind": "0.31.0",
+    "k6": "grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34",
+    "python": "python:3.13-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0",
+    "kube_prometheus_stack": "91.5.1",
+    "gateway_api": "1.6.0"
+  },
+  "inputs_changed_during_run": false,
+  "contention": {
+    "other_node": "mtag-shared-control-plane",
+    "present": true,
+    "samples": 4,
+    "mean_cpu": 0.26,
+    "limit_cpu": 0.5,
+    "confounded": false,
+    "host_load": {
+      "samples": 4,
+      "cpus": 10,
+      "mean_1m": 11.37,
+      "max_1m": 12.31
+    }
+  },
+  "kind": "offboarding",
+  "name": "tenant-06",
+  "run_id": "tenant-06-215532",
+  "tenant": "tenant-06",
+  "clock": "kind-node",
+  "started_ms": 1790286936643,
+  "config": {
+    "design": "dedicated",
+    "probe_rate": 5,
+    "tokens_per_minute": 20000,
+    "tenant_count_before": 6,
+    "mock_replicas": 2
+  },
+  "revoked_between_ms": [
+    -63,
+    136
+  ],
+  "revocation_observed_after_ms": 5541,
+  "success_after_revocation": 0,
+  "leaks": 0,
+  "cleaned_after_ms": 15128,
+  "objects_deleted": [
+    "Namespace/tenant-06",
+    "HelmRelease/agw-tenant-06 (controller Deployment, Service, ServiceAccount, Role, RoleBinding, 2 ClusterRoles, 2 ClusterRoleBindings, ServiceMonitor, PodMonitor)",
+    "GatewayClass/agw-tenant-06",
+    "AgentgatewayParameters/tenant-proxy",
+    "Gateway/agentgateway-proxy (proxy Deployment and Service)",
+    "AgentgatewayPolicy/tenant-auth",
+    "AgentgatewayPolicy/tenant-telemetry",
+    "AgentgatewayPolicy/tenant-limits",
+    "HTTPRoute/mock-chat",
+    "ConfigMap/tenant-key",
+    "Secret/mock-provider",
+    "AgentgatewayBackend/mock",
+    "Secret/foundry-provider",
+    "AgentgatewayBackend/foundry-model",
+    "HTTPRoute/foundry-chat"
+  ],
+  "shared_objects_changed": [],
+  "config_fingerprint": "89098831ea8e60881cd0fa63564531f91ef224652a15f7584ccfc235997f4b3b"
+}

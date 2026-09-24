@@ -26,7 +26,9 @@ build_report() {
     generated=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     jq -n -r --slurpfile runs "$runs" --slurpfile structure "$structure" --arg fp "$fingerprint" \
         --arg commit "$commit" --arg generated "$generated" \
-        '{runs: $runs[0], structure: $structure[0], current_fingerprint: $fp, commit: $commit, generated_at: $generated}' |
+        --argjson ports "{\"shared\": $SHARED_GRAFANA_PORT, \"dedicated\": $DEDICATED_GRAFANA_PORT}" \
+        '{runs: $runs[0], structure: $structure[0], current_fingerprint: $fp, commit: $commit, generated_at: $generated,
+          grafana_ports: $ports}' |
         jq -r -f "$ROOT/scripts/report.jq" >"$RESULTS/report.md"
     ok "Wrote results/report.md ($(jq '[.[] | select(.inputs_committed == true and .input_fingerprint == "'"$fingerprint"'")] | length' "$runs") runs match the current code)"
 }

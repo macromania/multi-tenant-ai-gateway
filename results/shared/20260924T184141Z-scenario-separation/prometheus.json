@@ -1,0 +1,41 @@
+[
+  {
+    "expr": "sum by (tenant) (increase(agentgateway_requests_total{tenant=~\"tenant-0[123]\"}[57s]))",
+    "time": 1790275348,
+    "result": {
+      "status": "success",
+      "data": {
+        "resultType": "vector",
+        "result": [
+          {
+            "metric": {
+              "tenant": "tenant-01"
+            },
+            "value": [
+              1790275348,
+              "164.25840643274853"
+            ]
+          },
+          {
+            "metric": {
+              "tenant": "tenant-02"
+            },
+            "value": [
+              1790275348,
+              "163.14855233522997"
+            ]
+          },
+          {
+            "metric": {
+              "tenant": "tenant-03"
+            },
+            "value": [
+              1790275348,
+              "163.14855233522997"
+            ]
+          }
+        ]
+      }
+    }
+  }
+]

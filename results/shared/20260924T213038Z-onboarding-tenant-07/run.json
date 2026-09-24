@@ -1,0 +1,90 @@
+{
+  "commit": "6587122fdd95cd5f2fa46b804a12b98527ffb777",
+  "inputs_committed": true,
+  "input_fingerprint": "8663a35bd91230409cf9397a488c78c80b6947b87917df8bc26411dfe0a70a2e",
+  "cluster": "shared",
+  "comparison_id": "20260924T212116Z-63548",
+  "versions": {
+    "agentgateway": "v1.5.0",
+    "kind": "0.31.0",
+    "k6": "grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34",
+    "python": "python:3.13-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0",
+    "kube_prometheus_stack": "91.5.1",
+    "gateway_api": "1.6.0"
+  },
+  "inputs_changed_during_run": false,
+  "contention": {
+    "other_node": "mtag-dedicated-control-plane",
+    "present": true,
+    "samples": 2,
+    "mean_cpu": 0.19,
+    "limit_cpu": 0.5,
+    "confounded": false,
+    "host_load": {
+      "samples": 2,
+      "cpus": 10,
+      "mean_1m": 8.3,
+      "max_1m": 8.39
+    }
+  },
+  "kind": "onboarding",
+  "name": "tenant-07",
+  "run_id": "tenant-07-213038",
+  "tenant": "tenant-07",
+  "clock": "kind-node",
+  "started_ms": 1790285444205,
+  "config": {
+    "design": "shared",
+    "probe_rate": 5,
+    "tokens_per_minute": 20000,
+    "tenant_count_before": 6,
+    "mock_replicas": 2,
+    "foundry_connected": true
+  },
+  "objects_written_after_ms": 1870,
+  "enforced_after_ms": 1549,
+  "key_activated_after_ms": 2187,
+  "usable_after_ms": 2434,
+  "usable_after_activation_ms": 247,
+  "foundry_connected_after_ms": null,
+  "leaks": 0,
+  "objects_created": [
+    "ConfigMap/tenant-07-key",
+    "Secret/mock-provider-tenant-07",
+    "AgentgatewayBackend/mock-tenant-07"
+  ],
+  "shared_objects_changed": [
+    "AgentgatewayPolicy/tenant-limits",
+    "HTTPRoute/mock-chat"
+  ],
+  "probe": {
+    "tenant": "tenant-07",
+    "role": "probe",
+    "target_rate": 5,
+    "duration": "300s",
+    "recorded": true,
+    "requests": 33,
+    "iterations": 33,
+    "dropped_iterations": 0,
+    "failed_rate": 0.7272727272727273,
+    "duration_ms": {
+      "p(50)": 0.524667,
+      "p(95)": 105.6379498,
+      "p(99)": 105.91223712,
+      "max": 105.960584
+    },
+    "verdicts": {
+      "verified": 9,
+      "leak": 0,
+      "blocked": 24,
+      "unverifiable": 0,
+      "failed": 0
+    },
+    "statuses": {
+      "200": 9,
+      "401": 24
+    }
+  },
+  "complete_after_ms": 2434,
+  "config_fingerprint": "6bf7070fbe9cfc105cd3d74021d94b62394c72c1f5ea91f847d624de2a444ebb"
+}

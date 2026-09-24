@@ -1,0 +1,4 @@
+
+=== FORGED TENANT HEADER | mtag-dedicated
+
+  Target                          tenant routing in proxy tenant-01/agentgateway-proxy (serves 1 tenant)

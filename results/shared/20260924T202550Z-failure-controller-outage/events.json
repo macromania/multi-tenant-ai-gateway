@@ -1,0 +1,72 @@
+[
+  {
+    "time": "2026-09-24T20:28:59Z",
+    "namespace": "agentgateway-system",
+    "object": "Pod/agentgateway-5c8c69f949-7bfqp",
+    "reason": "Scheduled",
+    "message": "Successfully assigned agentgateway-system/agentgateway-5c8c69f949-7bfqp to mtag-shared-control-plane"
+  },
+  {
+    "time": "2026-09-24T20:29:00Z",
+    "namespace": "agentgateway-system",
+    "object": "Pod/agentgateway-5c8c69f949-7bfqp",
+    "reason": "Pulled",
+    "message": "Container image \"cr.agentgateway.dev/controller:v1.5.0\" already present on machine and can be accessed by the pod"
+  },
+  {
+    "time": "2026-09-24T20:29:00Z",
+    "namespace": "agentgateway-system",
+    "object": "Pod/agentgateway-5c8c69f949-7bfqp",
+    "reason": "Created",
+    "message": "Container created"
+  },
+  {
+    "time": "2026-09-24T20:29:00Z",
+    "namespace": "agentgateway-system",
+    "object": "Pod/agentgateway-5c8c69f949-7bfqp",
+    "reason": "Started",
+    "message": "Container started"
+  },
+  {
+    "time": "2026-09-24T20:26:27Z",
+    "namespace": "agentgateway-system",
+    "object": "Pod/agentgateway-5c8c69f949-8hmmx",
+    "reason": "Killing",
+    "message": "Stopping container controller"
+  },
+  {
+    "time": "2026-09-24T20:26:27Z",
+    "namespace": "agentgateway-system",
+    "object": "ReplicaSet/agentgateway-5c8c69f949",
+    "reason": "SuccessfulDelete",
+    "message": "Deleted pod: agentgateway-5c8c69f949-8hmmx"
+  },
+  {
+    "time": "2026-09-24T20:28:59Z",
+    "namespace": "agentgateway-system",
+    "object": "ReplicaSet/agentgateway-5c8c69f949",
+    "reason": "SuccessfulCreate",
+    "message": "Created pod: agentgateway-5c8c69f949-7bfqp"
+  },
+  {
+    "time": "2026-09-24T20:29:18Z",
+    "namespace": "agentgateway-system",
+    "object": "Lease/agentgateway-agentgateway",
+    "reason": "LeaderElection",
+    "message": "agentgateway-5c8c69f949-7bfqp_ca49083b-8d16-4a2f-8051-f5c3960df1b9 became leader"
+  },
+  {
+    "time": "2026-09-24T20:28:59Z",
+    "namespace": "agentgateway-system",
+    "object": "Deployment/agentgateway",
+    "reason": "ScalingReplicaSet",
+    "message": "Scaled up replica set agentgateway-5c8c69f949 from 0 to 1"
+  },
+  {
+    "time": "2026-09-24T20:26:27Z",
+    "namespace": "agentgateway-system",
+    "object": "Deployment/agentgateway",
+    "reason": "ScalingReplicaSet",
+    "message": "Scaled down replica set agentgateway-5c8c69f949 from 1 to 0"
+  }
+]
