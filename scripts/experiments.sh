@@ -169,7 +169,7 @@ entry_check() {
     local tenant
     [[ ! -e "$(journal_file)" ]] || die "A recovery journal exists from an earlier experiment. Run make restore CLUSTER=$CLUSTER first."
     for tenant in $WORKING_SET; do
-        tenant_exists "$tenant" || die "The working set needs $WORKING_SET. Add each with make tenant-add CLUSTER=$CLUSTER TENANT=<name>."
+        tenant_exists "$tenant" || die "The working set needs $WORKING_SET. Run make scale CLUSTER=$CLUSTER TENANTS=3."
     done
     # 120 seconds covers a token budget that an earlier load spent; local limits refill each minute.
     recovery_checks 120 || die "The cluster is not healthy; nothing was changed. Run make restore CLUSTER=$CLUSTER."

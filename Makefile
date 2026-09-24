@@ -16,6 +16,7 @@ override NAME := $(value NAME)
 override KEEP := $(value KEEP)
 override FAILURE := $(value FAILURE)
 override RAISE_LIMIT := $(value RAISE_LIMIT)
+override TENANTS := $(value TENANTS)
 override PROMPT := $(value PROMPT)
 override PROMPT_FILE := $(value PROMPT_FILE)
 override FORMAT := $(value FORMAT)
@@ -25,7 +26,7 @@ override MODEL_VERSION := $(value MODEL_VERSION)
 override SKU := $(value SKU)
 override CAPACITY := $(value CAPACITY)
 override CONFIRM := $(value CONFIRM)
-export CLUSTER TENANT UPSTREAM TOKENS_PER_MINUTE PROFILE RATE DURATION NAME KEEP FAILURE RAISE_LIMIT PROMPT PROMPT_FILE FORMAT REGION MODEL MODEL_VERSION SKU CAPACITY CONFIRM
+export CLUSTER TENANT UPSTREAM TOKENS_PER_MINUTE PROFILE RATE DURATION NAME KEEP FAILURE RAISE_LIMIT TENANTS PROMPT PROMPT_FILE FORMAT REGION MODEL MODEL_VERSION SKU CAPACITY CONFIRM
 
 DEV_TARGETS := help doctor up cluster-up gateway-install status k9s dashboard logs gateway-forward \
 	grafana prometheus check down legacy-down
@@ -35,7 +36,7 @@ FOUNDRY_TARGETS := foundry-register foundry-regions foundry-models foundry-up fo
 TENANT_TARGETS := tenant-add tenant-remove tenant-limit tenants tenant-objects gateway-config
 EXPERIMENT_TARGETS := calibrate scenario break load restore
 
-.PHONY: $(DEV_TARGETS) $(FOUNDRY_TARGETS) $(TENANT_TARGETS) $(EXPERIMENT_TARGETS) prompt
+.PHONY: $(DEV_TARGETS) $(FOUNDRY_TARGETS) $(TENANT_TARGETS) $(EXPERIMENT_TARGETS) prompt scale
 
 $(DEV_TARGETS):
 	@/bin/bash scripts/dev.sh $@
@@ -51,3 +52,6 @@ $(EXPERIMENT_TARGETS):
 
 prompt:
 	@/bin/bash scripts/prompt.sh
+
+scale:
+	@/bin/bash scripts/scale.sh
