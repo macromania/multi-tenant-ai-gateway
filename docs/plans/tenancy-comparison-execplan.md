@@ -32,7 +32,7 @@ Two words have fixed meanings in this plan, in the code, and in every document i
 - [x] (2026-09-24 13:55Z) Milestone 3: shared-cluster tenants (tenant-01 to tenant-03) with measured onboarding and offboarding, per-tenant mock provider keys, the Foundry route, and retirement of the old cluster (`make legacy-down CONFIRM=1` after a real Foundry prompt succeeded through the shared gateway). Development runs made with uncommitted code were deleted; measured runs come from committed code in later milestones.
 - [x] (2026-09-24 14:35Z) Milestone 3 reviews: the rubber-duck review found 5 blocking and 4 non-blocking issues and the security review 1 medium issue, all fixed. Because Milestone 4 had already changed the same script, the fixes and Milestone 4 are in one commit. Recorded in FINDINGS.md.
 - [x] (2026-09-24 14:35Z) Milestone 4: dedicated-cluster tenants (tenant-01 to tenant-03), each with its own controller, GatewayClass, proxy, policies, mock provider key, and Foundry connection; measured onboarding and offboarding in both designs with the staged key lifecycle; bystander probes for tenant-01 and tenant-02 saw no failure while tenant-03 was removed.
-- [ ] Milestone 4 reviews: rubber-duck and security review of the Milestone 4 commit, findings recorded in FINDINGS.md.
+- [x] (2026-09-24 15:20Z) Milestone 4 reviews: the rubber-duck review found 6 blocking and 3 non-blocking issues and the security review 3 medium issues, all fixed with an explicit tenant state (onboarding, active, offboarding). Recorded in FINDINGS.md.
 - [ ] Milestone 5: prompts, load, calibration, and the separation, latency, rollout, and Foundry smoke scenarios.
 - [ ] Milestone 6: the ten deliberate failure modes with automatic restore.
 - [ ] Milestone 7: the scale sweep and onboarding measurements.
@@ -152,6 +152,10 @@ These facts were found while designing the plan, before any implementation. Each
 
 - Decision (Milestone 3 review): run provenance is captured when a run starts and compared at the end; a change marks the run `inputs_changed_during_run` and not committed. Every run record carries a `config` object (design, probe rate, limits, tenant count, mock replicas, and more) hashed into `config_fingerprint`.
   Rationale: provenance taken at the end could describe code the run did not execute, and comparisons need to know the conditions, not only the code.
+  Date/Author: 2026-09-24, Copilot.
+
+- Decision (Milestone 4 review): each tenant's key ConfigMap records `gateway.dev/tenant-state` (onboarding, active, offboarding) alongside `gateway.dev/key-active`. Commands act on the state: reapply keeps an active tenant active, resumes an interrupted onboarding with the staged activation, and refuses a tenant being removed. Revocation counts only gateway-origin 401 responses and keeps the boundary that allowed removal to continue. Configuration fingerprints leave out the design so the two clusters' runs can match.
+  Rationale: the reviews showed that reapplying, retrying, and cleaning up could each reactivate or retain a key, and that the mock's own 401 could look like revocation.
   Date/Author: 2026-09-24, Copilot.
 
 - Decision (Milestone 4): onboarding measures enforcement with a background watcher that polls the proxy's configuration from the start, in both designs, and a dedicated tenant's own Foundry connection is set up after the measured window and reported separately.

@@ -227,6 +227,19 @@ install_agentgateway_crds() {
 }
 
 # Sets RENDERED to a temporary copy of a template with its namespace filled in.
+# In the dedicated cluster, each tenant namespace gets the current tenant-auth and tenant-telemetry.
+update_tenant_policies() {
+    local namespace namespaces
+    namespaces=$(gateway_namespaces)
+    for namespace in $namespaces; do
+        migrate_tenant_keys "$namespace"
+        render_namespace "$ROOT/deploy/agentgateway/tenant-auth.yaml.tmpl" "$namespace"
+        kube_apply -f "$RENDERED" >/dev/null
+        render_namespace "$ROOT/deploy/agentgateway/tenant-telemetry.yaml.tmpl" "$namespace"
+        kube_apply -f "$RENDERED" >/dev/null
+    done
+}
+
 render_namespace() {
     new_temp; RENDERED=$TEMP_FILE
     sed "s/@NAMESPACE@/$2/g" "$1" >"$RENDERED"
@@ -238,6 +251,7 @@ install_shared_gateway() {
         --version "$AGENTGATEWAY_VERSION" --namespace "$NAMESPACE" \
         --values "$ROOT/deploy/agentgateway/values.yaml" --wait --timeout 5m
     kube_apply -f "$ROOT/deploy/agentgateway/gateway.yaml"
+    migrate_tenant_keys "$NAMESPACE"
     render_namespace "$ROOT/deploy/agentgateway/tenant-auth.yaml.tmpl" "$NAMESPACE"
     kube_apply -f "$RENDERED"
     kube_apply -f "$ROOT/deploy/agentgateway/tenant-routing.yaml"
@@ -301,7 +315,7 @@ gateway_install() {
     install_gateway_api
     install_observability
     install_agentgateway_crds
-    if [[ "$CLUSTER" == shared ]]; then install_shared_gateway; fi
+    if [[ "$CLUSTER" == shared ]]; then install_shared_gateway; else update_tenant_policies; fi
     install_mock
     install_dashboards
     install_loadgen

@@ -51,10 +51,12 @@ gateway_url() {
     printf 'http://%s.%s.svc/mock/v1/chat/completions' "$GATEWAY" "$(tenant_namespace "$1")"
 }
 
-# apply_tenant_objects <tenant> <namespace> <limit> <key ConfigMap> <provider Secret> <backend> <true|false>
-# The last argument sets gateway.dev/key-active; tenant-auth accepts the key only when it is "true".
+# apply_tenant_objects <tenant> <namespace> <limit> <key ConfigMap> <provider Secret> <backend> <state>
+# The state (onboarding, active, or offboarding) is stored as gateway.dev/tenant-state, and the key is
+# marked gateway.dev/key-active "true" only when the state is active; tenant-auth accepts only such keys.
 apply_tenant_objects() {
-    local tenant=$1 namespace=$2 limit=$3 key_name=$4 secret_name=$5 backend_name=$6 active=$7 file hash
+    local tenant=$1 namespace=$2 limit=$3 key_name=$4 secret_name=$5 backend_name=$6 state=$7 file hash active=false
+    case "$state" in onboarding|offboarding) ;; active) active=true ;; *) die "Internal error: tenant state $state." ;; esac
     hash=$(key_hash "$tenant")
     new_temp; file=$TEMP_FILE
     tenant_key "$tenant" MOCK | jq -Rs --arg name "$secret_name" --arg namespace "$namespace" --arg tenant "$tenant" '{
@@ -72,10 +74,11 @@ apply_tenant_objects() {
     kube_apply -f "$file" >/dev/null
     new_temp; file=$TEMP_FILE
     jq -n --arg name "$key_name" --arg namespace "$namespace" --arg tenant "$tenant" --arg hash "$hash" \
-        --arg limit "$limit" --arg active "$active" '{
+        --arg limit "$limit" --arg active "$active" --arg state "$state" '{
       apiVersion:"v1",kind:"ConfigMap",
       metadata:{name:$name,namespace:$namespace,
-                labels:{"gateway.dev/component":"tenant-key","gateway.dev/tenant":$tenant,"gateway.dev/key-active":$active},
+                labels:{"gateway.dev/component":"tenant-key","gateway.dev/tenant":$tenant,
+                        "gateway.dev/key-active":$active,"gateway.dev/tenant-state":$state},
                 annotations:{"gateway.dev/tokens-per-minute":$limit}},
       data:{($tenant):({keyHash:$hash,metadata:{tenant:$tenant}} | tojson)}}' >"$file"
     kube_apply -f "$file" >/dev/null
@@ -164,7 +167,7 @@ foundry_configured() {
 # A complete agentgateway for one tenant in its own namespace: its own Helm release (controller and
 # GatewayClass), Gateway and proxy, authentication, telemetry, key, limit, mock route, and backend.
 apply_dedicated_tenant() {
-    local tenant=$1 limit=$2 active=$3 file values attempt
+    local tenant=$1 limit=$2 state=$3 file values attempt
     new_temp; file=$TEMP_FILE
     jq -n --arg tenant "$tenant" '{apiVersion:"v1",kind:"Namespace",
       metadata:{name:$tenant,labels:{"gateway.dev/tenant":$tenant,"gateway.dev/component":"tenant"}}}' >"$file"
@@ -193,7 +196,7 @@ apply_dedicated_tenant() {
     new_temp; file=$TEMP_FILE
     sed "s/@NAMESPACE@/$tenant/g" "$ROOT/deploy/agentgateway/tenant-telemetry.yaml.tmpl" >"$file"
     kube_apply -f "$file" >/dev/null
-    apply_tenant_objects "$tenant" "$tenant" "$limit" tenant-key mock-provider mock "$active"
+    apply_tenant_objects "$tenant" "$tenant" "$limit" tenant-key mock-provider mock "$state"
     render_tenant "$tenant"
     wait_status "$tenant" agentgatewaypolicy/tenant-auth policy Accepted
     wait_status "$tenant" agentgatewaypolicy/tenant-telemetry policy Accepted
@@ -215,6 +218,15 @@ remove_dedicated_tenant() {
         sleep 1
     done
     helm_local uninstall "agw-$tenant" --namespace "$tenant" --ignore-not-found --wait --timeout 5m >&2
+    # Helm cannot uninstall a release whose record is gone; its cluster roles are then deleted here,
+    # but only if they carry that release's Helm ownership annotations.
+    local object owner
+    for object in $(dedicated_cluster_objects "$tenant" | grep -v '^gatewayclass/'); do
+        owner=$(kube get "$object" --ignore-not-found -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}/{.metadata.annotations.meta\.helm\.sh/release-namespace}')
+        [[ -n "$owner" && "$owner" != / ]] || continue
+        [[ "$owner" == "agw-$tenant/$tenant" ]] || die "$object belongs to $owner, not to $tenant; it was not deleted."
+        kube delete "$object" --ignore-not-found >/dev/null
+    done
     controller=$(kube get gatewayclass "agw-$tenant" --ignore-not-found -o jsonpath='{.spec.controllerName}')
     if [[ -n "$controller" ]]; then
         [[ "$controller" == "agentgateway.dev/$tenant" ]] ||
@@ -231,6 +243,49 @@ dedicated_cleaned() {
     objects=$(dedicated_cluster_objects "$1" | xargs kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$CONTEXT" \
         get --ignore-not-found -o name) || return 1
     [[ -z "$objects" ]]
+}
+
+# ---------------------------------------------------------------------------------------------
+# Single requests sent from the Kind node to a gateway's ClusterIP. The tenant key is written to a
+# private file and read by curl from standard input, so it never appears in a process argument.
+# node_request <tenant|none|invalid> <namespace> <path> [extra header line] [model] [max tokens]
+# Sets REQ_STATUS, REQ_OWNER, and REQ_ECHO_OK.
+# ---------------------------------------------------------------------------------------------
+node_request() {
+    local who=$1 namespace=$2 path=$3 extra=${4:-} model=${5:-mock-chat} tokens=${6:-16} ip headers response id
+    ip=$(kube -n "$namespace" get service "$GATEWAY" -o jsonpath='{.spec.clusterIP}')
+    [[ "$ip" =~ ^[0-9.]+$ ]] || die "No gateway Service in $namespace."
+    id="check-$(openssl rand -hex 6)"
+    new_temp; headers=$TEMP_FILE
+    case "$who" in
+        none) : >"$headers" ;;
+        invalid) printf 'Authorization: Bearer %s\n' "$(openssl rand -hex 32)" >"$headers" ;;
+        *) printf 'Authorization: Bearer %s\n' "$(tenant_key "$who" API)" >"$headers" ;;
+    esac
+    printf 'x-probe-id: %s\n' "$id" >>"$headers"
+    [[ -z "$extra" ]] || printf '%s\n' "$extra" >>"$headers"
+    response=$(node_exec curl --disable --silent --output /dev/null --dump-header - --header @- --max-time 60 \
+        --header 'Content-Type: application/json' \
+        --data "{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"check\"}],\"max_completion_tokens\":$tokens}" \
+        "http://$ip$path" <"$headers" | tr -d '\r') || response=
+    REQ_STATUS=$(awk 'NR == 1 {print $2}' <<<"$response")
+    REQ_OWNER=$(awk -F': ' 'tolower($1) == "x-mock-key-owner" {print $2}' <<<"$response")
+    REQ_ECHO_OK=false
+    if [[ "$(awk -F': ' 'tolower($1) == "x-mock-probe-id" {print $2}' <<<"$response")" == "$id" ]]; then REQ_ECHO_OK=true; fi
+}
+
+# Waits until the proxy serving each named tenant enforces the given limit.
+wait_enforced() {
+    local limit=$1 tenant deadline value; shift
+    deadline=$(( $(date +%s) + 120 ))
+    for tenant in "$@"; do
+        while :; do
+            value=$( (enforced_limit "$tenant") 2>/dev/null ) || value=
+            [[ "$value" != "$limit" ]] || break
+            [[ "$(date +%s)" -lt "$deadline" ]] || die "The proxy for $tenant did not enforce $limit within 120 seconds."
+            sleep 0.5
+        done
+    done
 }
 
 # The token limit the proxy actually enforces for a tenant, or nothing. The proxy stores a single
@@ -256,7 +311,7 @@ probe_records() {
         grep '^PROBE ' | cut -c7- || true
 }
 
-# apply_design_tenant <tenant> <limit> <true|false>: all of a tenant's objects, with its key active or not.
+# apply_design_tenant <tenant> <limit> <state>: all of a tenant's objects in the given state.
 apply_design_tenant() {
     if [[ "$CLUSTER" == shared ]]; then
         apply_tenant_objects "$1" "$NAMESPACE" "$2" "$1-key" "mock-provider-$1" "mock-$1" "$3"
@@ -270,9 +325,53 @@ key_configmap() {
     if [[ "$CLUSTER" == shared ]]; then printf '%s-key' "$1"; else printf 'tenant-key'; fi
 }
 
-set_key_active() {
+# set_tenant_state <tenant> <onboarding|active|offboarding>
+set_tenant_state() {
+    local active=false
+    [[ "$2" != active ]] || active=true
     kube -n "$(tenant_namespace "$1")" label configmap "$(key_configmap "$1")" \
-        "gateway.dev/key-active=$2" --overwrite >/dev/null
+        "gateway.dev/key-active=$active" "gateway.dev/tenant-state=$2" --overwrite >/dev/null
+}
+
+# The tenant's recorded state, or nothing when its key ConfigMap is absent.
+tenant_state() {
+    local namespace found
+    namespace=$(tenant_namespace "$1")
+    if [[ "$CLUSTER" == dedicated ]]; then
+        found=$(kube get namespace "$1" --ignore-not-found -o name) || die "Cannot read namespace $1."
+        [[ -n "$found" ]] || return 0
+    fi
+    kube -n "$namespace" get configmap "$(key_configmap "$1")" --ignore-not-found \
+        -o jsonpath='{.metadata.labels.gateway\.dev/tenant-state}' || die "Cannot read the state of $1."
+}
+
+# Refuses to run tenant commands against a tenant-auth policy that predates the key-active selector,
+# because that policy would accept inactive keys.
+require_current_auth() {
+    local namespace=$1 selector
+    selector=$(kube -n "$namespace" get agentgatewaypolicy tenant-auth --ignore-not-found \
+        -o jsonpath='{.spec.traffic.apiKeyAuthentication.configMapSelector.matchLabels.gateway\.dev/key-active}') ||
+        die "Cannot read tenant-auth in $namespace."
+    [[ -z "$(kube -n "$namespace" get agentgatewaypolicy tenant-auth --ignore-not-found -o name)" || "$selector" == true ]] ||
+        die "tenant-auth in $namespace predates key activation. Run make up CLUSTER=$CLUSTER first."
+}
+
+# Sends one request with the tenant's key to every gateway in the cluster and requires each to refuse
+# it at authentication (401 without an upstream answer). Retries for up to 60 seconds.
+verify_key_refused() {
+    local tenant=$1 namespace namespaces deadline accepted
+    namespaces=$(gateway_namespaces)
+    deadline=$(( $(date +%s) + 60 ))
+    while :; do
+        accepted=
+        for namespace in $namespaces; do
+            node_request "$tenant" "$namespace" /mock/v1/chat/completions
+            if [[ "$REQ_STATUS" != 401 || -n "$REQ_OWNER" ]]; then accepted="$namespace (HTTP ${REQ_STATUS:-none})"; break; fi
+        done
+        [[ -n "$accepted" ]] || return 0
+        [[ "$(date +%s)" -lt "$deadline" ]] || die "$tenant's key is still accepted by $accepted."
+        sleep 2
+    done
 }
 
 stored_limit() {
@@ -286,10 +385,11 @@ stored_limit() {
 # Refuses to continue if the tenant's key hash is also stored for another tenant, because then the
 # key would still authenticate, as that other tenant, after this tenant is removed.
 duplicate_hash_check() {
-    local tenant=$1 hash duplicates
+    local tenant=$1 hash duplicates canonical
     hash=$(key_hash "$tenant")
-    duplicates=$(kube get configmaps -A -l gateway.dev/component=tenant-key -o json | jq -r --arg tenant "$tenant" --arg hash "$hash" '
-      [.items[] | select(.metadata.labels["gateway.dev/tenant"] != $tenant) |
+    canonical="$(tenant_namespace "$tenant")/$(key_configmap "$tenant")"
+    duplicates=$(kube get configmaps -A -l gateway.dev/component=tenant-key -o json | jq -r --arg canonical "$canonical" --arg hash "$hash" '
+      [.items[] | select((.metadata.namespace + "/" + .metadata.name) != $canonical) |
        select([.data[]? | (fromjson? // {}) | .keyHash] | index($hash)) |
        .metadata.namespace + "/" + .metadata.name] | join(", ")') || die "Cannot read the tenant key ConfigMaps."
     [[ -z "$duplicates" ]] || die "$tenant's key hash is also stored in $duplicates; fix that first."
@@ -306,6 +406,9 @@ tenant_artifacts() {
             get --ignore-not-found -o name) || die "Cannot read the objects of $tenant."
         found="$found$(kube get namespace "$tenant" --ignore-not-found -o name)" || die "Cannot read namespace $tenant."
     fi
+    load_tenant_env
+    if jq -e --arg api "$(tenant_key_name "$tenant" API)" --arg mock "$(tenant_key_name "$tenant" MOCK)" \
+        'has($api) or has($mock)' "$TENANT_JSON" >/dev/null; then found="$found keys"; fi
     printf '%s' "$found"
 }
 
@@ -322,8 +425,15 @@ remove_tenant_keys() {
 # Removes whatever is left of a tenant without measuring anything, for a tenant-add or tenant-remove
 # that was interrupted.
 cleanup_partial_tenant() {
-    local tenant=$1
+    local tenant=$1 has_keys=
     warn "$tenant is incomplete; removing what is left. This is not a measured offboarding."
+    load_tenant_env
+    if jq -e --arg api "$(tenant_key_name "$tenant" API)" '(.[$api] // "") | test("^[a-f0-9]{64}$")' "$TENANT_JSON" >/dev/null; then
+        has_keys=yes
+        duplicate_hash_check "$tenant"
+    fi
+    if [[ -n "$(tenant_state "$tenant")" ]]; then set_tenant_state "$tenant" offboarding; fi
+    if [[ -n "$has_keys" && -n "$(gateway_namespaces)" ]]; then verify_key_refused "$tenant"; fi
     if [[ "$CLUSTER" == shared ]]; then
         kube -n "$NAMESPACE" delete configmaps,agentgatewaybackends,secrets -l "gateway.dev/tenant=$tenant" \
             --ignore-not-found --wait=true >/dev/null
@@ -331,18 +441,22 @@ cleanup_partial_tenant() {
     else
         remove_dedicated_tenant "$tenant"
     fi
-    load_tenant_env
+    local deadline=$(( $(date +%s) + 300 ))
+    until tenant_cleaned "$tenant"; do
+        [[ "$(date +%s)" -lt "$deadline" ]] || die "Objects of $tenant remain after cleanup: $(tenant_artifacts "$tenant")"
+        sleep 2
+    done
     remove_tenant_keys "$tenant"
     ok "$tenant is cleaned up and its keys are deleted"
 }
 
 # jq function over probe records sorted by start time: the last successful request, the start of the
-# first run of 25 consecutive 401 responses after it (the key is refused by authentication, not just
-# missing a route), and the number of leaks.
+# first run of 25 consecutive refusals by the gateway's authentication after it (401 without an
+# upstream answer; the mock's own 401 for a bad provider key does not count), and the number of leaks.
 REVOCATION_JQ='def revocation($started):
   (map(select(.verdict == "verified") | .start_ms) | max) as $last |
   ([range(0; length) as $i | select(.[$i].start_ms >= $started and ($last == null or .[$i].start_ms > $last) and
-      (.[$i:$i + 25] | length) == 25 and (.[$i:$i + 25] | all(.status == 401))) | .[$i].start_ms] | first) as $streak |
+      (.[$i:$i + 25] | length) == 25 and (.[$i:$i + 25] | all(.status == 401 and .verdict == "blocked"))) | .[$i].start_ms] | first) as $streak |
   {last_success: $last, streak_start: $streak, leaks: (map(select(.verdict == "leak")) | length)};'
 
 current_records() {
@@ -404,6 +518,19 @@ changed_objects_json() {
     if [[ "$CLUSTER" == shared ]]; then printf '%s' '["AgentgatewayPolicy/tenant-limits","HTTPRoute/mock-chat"]'; else printf '[]'; fi
 }
 
+# Saves the probe records and a run record explaining the failure, then stops with an error.
+onboarding_failed() {
+    local started=$1 reason=$2 fields
+    load_finish "$RUN_ID" probe "$RUN_DIR" >/dev/null || true
+    new_temp; fields=$TEMP_FILE
+    jq -n --arg tenant "$TENANT" --arg run "$RUN_ID" --argjson started "$started" --arg reason "$reason" \
+        --arg design "$CLUSTER" --argjson rate "$PROBE_RATE" '{kind:"onboarding", name:$tenant, run_id:$run,
+        tenant:$tenant, clock:"kind-node", started_ms:$started, failed:true, reason:$reason,
+        config:{design:$design, probe_rate:$rate}}' >"$fields"
+    write_run_json "$fields"
+    die "Onboarding $TENANT failed: $reason. Evidence: ${RUN_DIR#$ROOT/}"
+}
+
 ONBOARDING_DONE=
 onboarding_hint() {
     [[ -n "$ONBOARDING_DONE" ]] ||
@@ -416,20 +543,41 @@ tenant_add() {
     [[ -z "$limit" ]] || validate_limit "$limit"
     verify_context
     section "ADD TENANT | $KIND_CLUSTER | $tenant"
-    if tenant_exists "$tenant"; then
-        [[ -n "$limit" ]] || limit=$(stored_limit "$tenant")
-        info "$tenant already exists; reapplying its objects with the stored keys and a limit of $limit."
-        ensure_keys "$tenant"
-        mock_push_keys
-        apply_design_tenant "$tenant" "$limit" true
-        connect_tenant_foundry "$tenant"
-        ok "$tenant objects reapplied"
-        return
-    fi
+    require_current_auth "$(tenant_namespace "$tenant")"
+    local state
+    state=$(tenant_state "$tenant")
+    case "$state" in
+        active)
+            [[ -n "$limit" ]] || limit=$(stored_limit "$tenant")
+            info "$tenant is active; reapplying its objects with the stored keys and a limit of $limit."
+            ensure_keys "$tenant"
+            mock_push_keys
+            apply_design_tenant "$tenant" "$limit" active
+            connect_tenant_foundry "$tenant"
+            ok "$tenant objects reapplied"
+            return ;;
+        onboarding)
+            [[ -n "$limit" ]] || limit=$(stored_limit "$tenant")
+            info "$tenant was not fully added; resuming with its key inactive until its limit is enforced (not measured)."
+            ensure_keys "$tenant"
+            duplicate_hash_check "$tenant"
+            mock_push_keys
+            apply_design_tenant "$tenant" "$limit" onboarding
+            wait_enforced "$limit" "$tenant"
+            set_tenant_state "$tenant" active
+            connect_tenant_foundry "$tenant"
+            ok "$tenant is active"
+            return ;;
+        offboarding) die "$tenant is being removed. Run make tenant-remove CLUSTER=$CLUSTER TENANT=$tenant CONFIRM=1 to finish." ;;
+        '') ;;
+        *) die "$tenant has an unknown state $state." ;;
+    esac
     [[ -n "$limit" ]] || limit=$DEFAULT_TOKENS_PER_MINUTE
     local count existing leftovers
     leftovers=$(tenant_artifacts "$tenant")
-    [[ -z "$leftovers" ]] || die "$tenant has leftover objects from an interrupted run. Run make tenant-remove CLUSTER=$CLUSTER TENANT=$tenant CONFIRM=1 first."
+    if [[ -n "$leftovers" && "$leftovers" != " keys" ]]; then
+        die "$tenant has leftover objects from an interrupted run. Run make tenant-remove CLUSTER=$CLUSTER TENANT=$tenant CONFIRM=1 first."
+    fi
     existing=$(tenant_list)
     count=$(printf '%s' "$existing" | grep -c . || true)
     if [[ "$CLUSTER" == shared ]]; then
@@ -450,25 +598,26 @@ tenant_add() {
     started=$(node_now_ms)
     start_enforcement_watch "$tenant" "$limit"
     info 'Applying the tenant with its key inactive, so its limit is enforced before the key is accepted.'
-    apply_design_tenant "$tenant" "$limit" false
+    apply_design_tenant "$tenant" "$limit" onboarding
     written=$(node_now_ms)
     deadline=$((started + 300000))
     until [[ -s "$WATCH_FILE" ]]; do
-        [[ "$(node_now_ms)" -lt "$deadline" ]] || die "The proxy did not enforce $tenant's limit within 300 seconds."
+        [[ "$(node_now_ms)" -lt "$deadline" ]] || onboarding_failed "$started" "the proxy did not enforce the limit within 300 seconds"
         sleep 0.5
     done
     enforced_at=$(cat "$WATCH_FILE")
     wait "$WATCH_PID" 2>/dev/null || true
     WATCH_PID=
+    duplicate_hash_check "$tenant"
     # Taken before the change, because a request can succeed as soon as the proxy sees it.
     published=$(node_now_ms)
-    set_key_active "$tenant" true
+    set_tenant_state "$tenant" active
     info "Limit enforced $((enforced_at - started)) ms after the start; key activated. Waiting for the first successful request."
     deadline=$((published + 120000))
     while :; do
         records=$(probe_records)
         if grep -q '"verdict":"verified"' <<<"$records"; then break; fi
-        [[ "$(node_now_ms)" -lt "$deadline" ]] || die "$tenant was not usable within 120 seconds of activating its key."
+        [[ "$(node_now_ms)" -lt "$deadline" ]] || onboarding_failed "$started" "not usable within 120 seconds of activating the key"
         sleep 1
     done
     load_finish "$RUN_ID" probe "$RUN_DIR" >/dev/null
@@ -538,12 +687,8 @@ tenant_remove() {
     [[ "${CONFIRM:-}" == 1 ]] || die "This removes $tenant and its keys. Rerun with CONFIRM=1."
     section "REMOVE TENANT | $KIND_CLUSTER | $tenant"
     load_tenant_env
-    local key_state
-    if tenant_exists "$tenant"; then
-        key_state=$(kube -n "$(tenant_namespace "$tenant")" get configmap "$(key_configmap "$tenant")" --ignore-not-found \
-            -o jsonpath='{.metadata.labels.gateway\.dev/key-active}') || die "Cannot read $tenant."
-    fi
-    if ! tenant_exists "$tenant" || [[ "${key_state:-}" != true ]]; then
+    require_current_auth "$(tenant_namespace "$tenant")"
+    if [[ "$(tenant_state "$tenant")" != active ]]; then
         if [[ -n "$(tenant_artifacts "$tenant")" ]]; then cleanup_partial_tenant "$tenant"; return; fi
         die "$tenant does not exist in $KIND_CLUSTER."
     fi
@@ -553,7 +698,7 @@ tenant_remove() {
     count=$(printf '%s' "$existing" | grep -c . || true)
     limit=$(stored_limit "$tenant")
     new_run offboarding "$tenant"
-    local plan started state revoked_seen= cleaned_ms= now deadline healthy
+    local plan started state revoked_seen= boundary= cleaned_ms= now deadline healthy
     new_temp; plan=$TEMP_FILE
     probe_plan "$tenant" "$plan"
     load_start "$RUN_ID" probe "$plan"
@@ -567,16 +712,18 @@ tenant_remove() {
     done
     started=$(node_now_ms)
     info 'Deactivating the key first; the rest is removed only after authentication refuses it.'
-    set_key_active "$tenant" false
+    set_tenant_state "$tenant" offboarding
     deadline=$((started + 120000))
     while :; do
         state=$(current_records | jq -c --argjson started "$started" "$REVOCATION_JQ revocation(\$started)")
         [[ "$(jq '.leaks' <<<"$state")" -eq 0 ]] || die "Probe responses reached another tenant's provider key; stopping."
-        if [[ "$(jq '.streak_start' <<<"$state")" != null ]]; then revoked_seen=$(node_now_ms); break; fi
+        boundary=$(jq '.streak_start' <<<"$state")
+        if [[ "$boundary" != null ]]; then revoked_seen=$(node_now_ms); break; fi
         [[ "$(node_now_ms)" -lt "$deadline" ]] ||
             die "Authentication still accepts $tenant's key after 120 seconds. The key is inactive and nothing else was removed."
         sleep 1
     done
+    verify_key_refused "$tenant"
     if [[ "$CLUSTER" == shared ]]; then
         kube -n "$NAMESPACE" delete configmap "$tenant-key" --wait=true >/dev/null
         render_shared
@@ -595,12 +742,16 @@ tenant_remove() {
     local fields mock_replicas
     mock_replicas=$(kube -n "$MOCK_NAMESPACE" get deployment mock -o jsonpath='{.spec.replicas}')
     new_temp; fields=$TEMP_FILE
+    # The boundary is the start of the refusal run that allowed removal to continue; any success
+    # after it means access came back, which invalidates the result.
     jq -s --arg tenant "$tenant" --argjson started "$started" --arg cleaned "$cleaned_ms" --arg run "$RUN_ID" \
         --argjson seen "$revoked_seen" --argjson count "$count" --argjson limit "$limit" --argjson rate "$PROBE_RATE" \
-        --arg design "$CLUSTER" --argjson replicas "$mock_replicas" \
-        --argjson deleted "$(created_objects_json "$tenant")" --argjson changed "$(changed_objects_json)" "$REVOCATION_JQ"'
-      sort_by(.start_ms) | revocation($started) as $r |
-      ([.[] | select($r.streak_start != null and .start_ms > $r.streak_start and .verdict == "verified")] | length) as $resumed |
+        --arg design "$CLUSTER" --argjson replicas "$mock_replicas" --argjson boundary "$boundary" \
+        --argjson deleted "$(created_objects_json "$tenant")" --argjson changed "$(changed_objects_json)" '
+      sort_by(.start_ms) |
+      {last_success: ([.[] | select(.verdict == "verified" and .start_ms < $boundary) | .start_ms] | max),
+       streak_start: $boundary, leaks: ([.[] | select(.verdict == "leak")] | length)} as $r |
+      ([.[] | select(.start_ms >= $boundary and .verdict == "verified")] | length) as $resumed |
       {kind:"offboarding", name:$tenant, run_id:$run, tenant:$tenant, clock:"kind-node", started_ms:$started,
        config:{design:$design, probe_rate:$rate, tokens_per_minute:$limit, tenant_count_before:$count,
                mock_replicas:$replicas},
@@ -724,11 +875,16 @@ gateway_config() {
        select(.condition? == $condition) | "Token limit: \(.pol[0].maxTokens) per \(.pol[0].fillInterval)"] |
       if length == 0 then "Token limit: none enforced" else .[] end' <<<"$config" |
         while IFS= read -r line; do info "$line"; done
-    jq -r --arg tenant "$tenant" '[.. | objects | select(.kind? == "HTTPRoute" and .name? == "mock-chat") |
-        select([.matches[]?.headers[]? | .value.exact?] | index($tenant)) | .backends[]?.backend] | unique[] |
-        "Mock route backend: \(.)"' <<<"$config" | while IFS= read -r line; do info "$line"; done
+    jq -r --arg tenant "$tenant" --arg design "$CLUSTER" '
+      [.. | objects | select(.kind? == "HTTPRoute" and .name? == "mock-chat") |
+       select($design == "dedicated" or ([.matches[]?.headers[]? | .value.exact?] | index($tenant))) |
+       .backends[]?.backend] | unique |
+      if length == 0 then "Mock route backend: none" else .[] | "Mock route backend: \(.)" end' <<<"$config" |
+        while IFS= read -r line; do info "$line"; done
 }
 
+# Commands run only when this file is executed; scripts/experiments.sh sources it for its functions.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 select_cluster
 case "${1:-}" in
     tenant-add) tenant_add ;;
@@ -739,3 +895,4 @@ case "${1:-}" in
     gateway-config) gateway_config ;;
     *) die "Unknown tenant command: ${1:-missing}" ;;
 esac
+fi

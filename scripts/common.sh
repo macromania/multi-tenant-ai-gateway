@@ -452,6 +452,18 @@ tenants_served_by() {
     fi
 }
 
+# Tenants created before the key-activation labels existed were in service, so they are marked active
+# before a tenant-auth policy that requires the label is applied.
+migrate_tenant_keys() {
+    local namespace=$1 names name
+    names=$(kube -n "$namespace" get configmaps -l 'gateway.dev/component=tenant-key,!gateway.dev/tenant-state' -o name) ||
+        die "Cannot read the tenant keys in $namespace."
+    for name in $names; do
+        kube -n "$namespace" label "$name" gateway.dev/key-active=true gateway.dev/tenant-state=active --overwrite >/dev/null
+        warn "Marked $namespace/${name#configmap/} active; it was created before key activation existed."
+    done
+}
+
 # Waits for a condition that agentgateway reports per Gateway: policies under status.ancestors,
 # routes under status.parents, and other objects under status.conditions.
 # wait_status <namespace> <resource> <policy|route|plain> <condition>

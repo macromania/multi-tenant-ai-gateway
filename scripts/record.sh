@@ -65,8 +65,8 @@ provenance_json() {
 # write_run_json <json file with run-specific fields>: merges the provenance captured when the run
 # started and writes run.json. If the implementation inputs changed during the run, the record says
 # so and does not claim they were committed. A "config" object in the fields (workload, tenant count,
-# limits, mock settings, windows) is hashed into config_fingerprint, which the report uses to decide
-# which runs are comparable.
+# limits, mock settings, windows) is hashed, without its design field, into config_fingerprint, which
+# the report uses to decide which runs of the two designs are comparable.
 write_run_json() {
     local now
     new_temp; now=$TEMP_FILE
@@ -79,7 +79,9 @@ write_run_json() {
       . + $fields' "$RUN_PROVENANCE" "$now" "$1" >"$RUN_DIR/run.json"
     if jq -e 'has("config")' "$RUN_DIR/run.json" >/dev/null; then
         local digest
-        digest=$(jq -S -c '.config' "$RUN_DIR/run.json" | openssl dgst -sha256 -r | awk '{print $1}')
+        # The design is recorded but left out of the hash, so the same conditions in the two
+        # clusters give the same fingerprint.
+        digest=$(jq -S -c '.config | del(.design)' "$RUN_DIR/run.json" | openssl dgst -sha256 -r | awk '{print $1}')
         jq --arg digest "$digest" '.config_fingerprint = $digest' "$RUN_DIR/run.json" >"$now"
         cp -- "$now" "$RUN_DIR/run.json"
     fi

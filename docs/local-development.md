@@ -168,14 +168,19 @@ conditional token limit per tenant) and HTTPRoute `mock-chat` (one rule per tena
 key authentication, so a client cannot choose another tenant's route or key. Both lists hold at most
 16 entries, so the shared design as built holds at most 16 tenants; `tenant-add` refuses a 17th.
 
-A key takes part in authentication only while its ConfigMap has `gateway.dev/key-active: "true"`.
-`tenant-add` applies everything with the key inactive, waits until the proxy's own configuration
-shows the tenant's limit, and only then activates the key, so a tenant is never accepted without its
-limit. `tenant-remove` deactivates the key first and removes the rest only after authentication has
-refused it 25 times in a row. It refuses to start if the key's hash is also stored for another tenant.
-Rerunning `tenant-add` for an existing tenant reapplies its objects and keeps its stored limit unless
-`TOKENS_PER_MINUTE` is given. If an add or remove was interrupted, `tenant-remove CONFIRM=1` removes
-whatever is left without measuring it.
+Each tenant's key ConfigMap records its state in `gateway.dev/tenant-state` (onboarding, active, or
+offboarding), and the key takes part in authentication only while `gateway.dev/key-active` is
+`"true"`, which is only in the active state. `tenant-add` applies everything as onboarding, waits
+until the proxy's own configuration shows the tenant's limit, and only then activates the key, so a
+tenant is never accepted without its limit. `tenant-remove` deactivates the key first and removes the
+rest only after the gateway's authentication has refused it 25 times in a row and every gateway in
+the cluster refuses it. Both refuse to continue if the key's hash is stored anywhere else.
+
+Rerunning `tenant-add` for an active tenant reapplies its objects and keeps its stored limit unless
+`TOKENS_PER_MINUTE` is given; for an interrupted onboarding it resumes with the key inactive; for a
+tenant being removed it refuses. If an add or remove was interrupted, `tenant-remove CONFIRM=1`
+removes whatever is left, including keys with no objects, after proving the key is refused, without
+measuring it. `make up` marks tenants created before these labels existed as active.
 
 `tenant-add` and `tenant-remove` measure themselves. A k6 probe sends five requests per second with
 the tenant's key from inside the cluster before anything changes. Onboarding records when the proxy

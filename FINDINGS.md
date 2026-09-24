@@ -132,3 +132,30 @@ dedicated cluster".
 | # | Severity | Finding | Resolution | Status |
 | --- | --- | --- | --- | --- |
 | 1 | MEDIUM | Offboarding treated cross-tenant access (HTTP 200 marked `leak`) as revocation, so with a duplicate key hash a removed tenant's key could keep working as another tenant while the command reported success. | Removal refuses to start if the key's hash is stored for another tenant, requires authentication refusals (401) as revocation evidence, and fails on any leak. | Fixed |
+
+
+## Milestone 4: a complete agentgateway per tenant
+
+Reviewed commit `788419a`. Fixes are in the commit "Fix the Milestone 4 review findings".
+
+### Rubber-duck review (9 findings)
+
+| # | Severity | Finding | Resolution | Status |
+| --- | --- | --- | --- | --- |
+| 1 | Blocking | Retrying an interrupted add reapplied the tenant with its key active, before its limit was repaired. | Each tenant has a state (`gateway.dev/tenant-state`: onboarding, active, offboarding). An interrupted onboarding resumes with the key inactive and activates it only after the proxy enforces the limit. | Fixed |
+| 2 | Blocking | The stricter tenant-auth selector had no migration, so existing tenants lost access and `check` could pass with zero keys checked. | `make up` marks keys created before activation existed as active before applying the new selector, in the shared namespace and in every dedicated tenant namespace; tenant commands refuse to run against an old selector. | Fixed |
+| 3 | Blocking | The final revocation calculation chose the refusal run after the last success, so a success between two refusal runs was hidden. | The boundary that allowed removal to continue is kept, and any success after it fails the command. | Fixed |
+| 4 | Blocking | The mock's own 401 (a bad provider key) counted as the gateway refusing the tenant key. | Revocation counts only 401 responses that carry no upstream answer (verdict `blocked`). | Fixed |
+| 5 | Blocking | The configuration fingerprint included the design, so shared and dedicated runs could never be compared. | The design is recorded but left out of the fingerprint. | Fixed |
+| 6 | Blocking | Leftover keys with no tenant objects could not be cleaned up. | Stored keys count as leftovers, and `tenant-remove` removes them (verified with a keys-only tenant). | Fixed |
+| 7 | Non-blocking | Orphaned dedicated cluster roles were detected but never removed, and partial cleanup reported success without checking. | Cluster roles carrying that release's Helm ownership annotations are deleted, and cleanup succeeds only when nothing is left. | Fixed |
+| 8 | Non-blocking | A failed onboarding kept no evidence. | The probe records and a run record with the reason are saved before the command fails. | Fixed |
+| 9 | Non-blocking | `gateway-config` showed no route backend for dedicated tenants. | Dedicated routes are matched without the shared design's header condition. | Fixed |
+
+### Security review (3 findings)
+
+| # | Severity | Finding | Resolution | Status |
+| --- | --- | --- | --- | --- |
+| 1 | MEDIUM | Reapplying a tenant reactivated a key that offboarding had deactivated. | Reapply acts on the tenant's state: active tenants stay active, onboarding resumes with the staged activation, and a tenant being removed is refused with instructions to finish the removal. | Fixed |
+| 2 | MEDIUM | The duplicate check skipped every ConfigMap labelled with the departing tenant, so a copy in another namespace escaped it. | Only the tenant's own ConfigMap, by namespace and name, is excluded; a copied hash stopped removal in a live test. | Fixed |
+| 3 | MEDIUM | Cleaning up an incomplete tenant skipped the duplicate check and never proved that the key was refused. | Cleanup runs the duplicate check, deactivates the key, and requires every gateway in the cluster to refuse it at authentication before deleting anything. | Fixed |
