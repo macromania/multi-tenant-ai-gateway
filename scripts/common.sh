@@ -23,6 +23,7 @@ KIND_CLUSTER= CONTEXT= CLUSTER_STATE= KUBECONFIG_FILE= NODE_NAME= NODE_ID=
 GATEWAY_PORT= KUBERNETES_PORT= REQUEST_PORT= DASHBOARD_PORT= GRAFANA_PORT= PROMETHEUS_PORT=
 
 TEMP_FILES=()
+TEMP_DIR=
 ON_EXIT_HOOKS=()
 FORWARD_PID=
 FORWARD_LOG=
@@ -53,14 +54,14 @@ stop_forward() {
     FORWARD_PID=
 }
 
-# Hooks run in reverse order, each in its own subshell with its own cleanup, so a failing
-# hook cannot abort the remaining hooks or leave this process's temporary files behind.
-# A hook runs as a plain command, never inside || or &&, so that set -e stays in force.
+# Hooks run in reverse order, each in its own subshell, so a failing hook cannot abort the
+# remaining hooks. A hook runs as a plain command, never inside || or &&, so that set -e stays in
+# force. Bash 3.2 never runs a subshell's EXIT trap while the parent's EXIT trap is running, so a
+# hook keeps its temporary files in this process's directory, which cleanup removes after every hook.
 run_hook() {
     (
         set -euo pipefail
-        TEMP_FILES=(); ON_EXIT_HOOKS=(); FORWARD_PID=; LOAD_PENDING=()
-        trap cleanup EXIT
+        ON_EXIT_HOOKS=(); FORWARD_PID=; LOAD_PENDING=()
         "$1"
     )
 }
@@ -82,6 +83,7 @@ cleanup() {
     for file in "${TEMP_FILES[@]+"${TEMP_FILES[@]}"}"; do
         [[ -f "$file" && ! -L "$file" ]] && rm -f -- "$file"
     done
+    [[ -z "$TEMP_DIR" || ! -d "$TEMP_DIR" || -L "$TEMP_DIR" ]] || rm -rf -- "$TEMP_DIR"
     exit "$status"
 }
 trap cleanup EXIT
@@ -138,11 +140,21 @@ private_state() {
     fi
 }
 
+# Every temporary file of one process lives in one private directory, created when the process
+# starts and removed by its exit trap. A file created inside $(...) records itself only in that
+# subshell's TEMP_FILES, but it is still inside this directory, so it cannot outlive the command.
+new_temp_dir() {
+    private_state
+    TEMP_DIR=$(mktemp -d "$STATE/tmp.XXXXXXXX")
+}
+
 new_temp() {
     private_state
-    TEMP_FILE=$(mktemp "$STATE/tmp.XXXXXXXX")
+    [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]] || new_temp_dir
+    TEMP_FILE=$(mktemp "$TEMP_DIR/f.XXXXXXXX")
     TEMP_FILES+=("$TEMP_FILE")
 }
+new_temp_dir
 
 file_mode() {
     if [[ "$(uname -s)" == Darwin ]]; then stat -f '%Lp' "$1"; else stat -c '%a' "$1"; fi
@@ -309,17 +321,23 @@ node_exec() {
     docker_local exec -i "$NODE_ID" "$@"
 }
 
-# Prints the process ID of the single running proxy container in a gateway namespace.
-proxy_pid() {
-    local namespace=$1 containers id
+# Prints the container ID of the single running proxy container in a gateway namespace.
+proxy_container_id() {
+    local namespace=$1 containers
     containers=$(node_exec crictl ps --state running --label "io.kubernetes.pod.namespace=$namespace" \
         --label io.kubernetes.container.name=agentgateway -o json) || die "Cannot list containers in the Kind node."
-    id=$(jq -er --arg prefix "$GATEWAY-" '
+    jq -er --arg prefix "$GATEWAY-" '
       [.containers[] | select(.labels["io.kubernetes.pod.name"] | startswith($prefix)) | .id] |
       if length == 1 then .[0] else error("expected exactly one running proxy container") end
-    ' <<<"$containers") || die "Expected exactly one running proxy in $namespace."
+    ' <<<"$containers" || die "Expected exactly one running proxy in $namespace."
+}
+
+# Prints the process ID of the single running proxy container in a gateway namespace.
+proxy_pid() {
+    local id
+    id=$(proxy_container_id "$1")
     node_exec crictl inspect "$id" | jq -er '.info.pid | select(type == "number" and . > 1)' ||
-        die "Cannot read the proxy process ID in $namespace."
+        die "Cannot read the proxy process ID in $1."
 }
 
 # Prints the proxy's effective configuration. The admin endpoint listens on the pod's loopback

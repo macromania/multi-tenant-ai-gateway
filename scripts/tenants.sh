@@ -10,6 +10,9 @@ MAX_TOKENS_PER_MINUTE=1000000000
 SHARED_TENANT_CEILING=16
 MOCK_HOST=mock.mock-upstream.svc.cluster.local
 PROBE_RATE=5
+# Set to 0 to apply rendered policies without waiting for their status, for example while a
+# controller is deliberately stopped and cannot report status.
+RENDER_WAIT=${RENDER_WAIT:-1}
 
 validate_limit() {
     [[ "${1:-}" =~ ^[1-9][0-9]{0,9}$ ]] && (( 10#$1 <= MAX_TOKENS_PER_MINUTE )) ||
@@ -126,6 +129,7 @@ render_shared() {
         "$tenants" >"$route"
     kube_apply -f "$policy" >/dev/null
     kube_apply -f "$route" >/dev/null
+    [[ "$RENDER_WAIT" == 1 ]] || return 0
     wait_status "$NAMESPACE" agentgatewaypolicy/tenant-limits policy Accepted
     wait_status "$NAMESPACE" httproute/mock-chat route Accepted
     wait_status "$NAMESPACE" httproute/mock-chat route ResolvedRefs
@@ -155,6 +159,7 @@ render_tenant() {
               backendRefs:[{group:"agentgateway.dev",kind:"AgentgatewayBackend",name:"mock"}]}]}}' >"$route"
     kube_apply -f "$policy" >/dev/null
     kube_apply -f "$route" >/dev/null
+    [[ "$RENDER_WAIT" == 1 ]] || return 0
     wait_status "$tenant" agentgatewaypolicy/tenant-limits policy Accepted
     wait_status "$tenant" httproute/mock-chat route Accepted
     wait_status "$tenant" httproute/mock-chat route ResolvedRefs

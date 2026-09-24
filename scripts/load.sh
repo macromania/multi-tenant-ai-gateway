@@ -194,9 +194,12 @@ load_wait() {
 # load_finish <run-id> <role> <output directory>: stops the Job if it still runs, saves its
 # summary and per-request records, and deletes its Job, plan, and keys.
 load_finish() {
-    local run=$1 role=$2 out=$3 name log entry kept=() stopped=
+    local run=$1 role=$2 out=$3 name log entry kept=() stopped= stop_ms=0
     name=$(load_job_name "$run" "$role")
-    if [[ "$(load_state "$run" "$role")" == running ]]; then load_stop "$run" "$role"; stopped=1; fi
+    if [[ "$(load_state "$run" "$role")" == running ]]; then
+        stop_ms=$(node_now_ms)
+        load_stop "$run" "$role"; stopped=1
+    fi
     load_wait "$run" "$role" 180
     mkdir -p -- "$out"
     new_temp; log=$TEMP_FILE
@@ -209,10 +212,13 @@ load_finish() {
     grep '^K6_SUMMARY ' "$log" | tail -1 | cut -c12- >"$out/k6-summary-$role.json" || true
     grep -v -E '^(PROBE|START|K6_SUMMARY) ' "$log" | tail -50 >"$out/k6-$role.log" || true
     [[ -s "$out/k6-summary-$role.json" ]] || { cat "$out/k6-$role.log" >&2; die "$name produced no summary."; }
-    # A request that started but never finished was cut off by the stop and is kept as censored.
-    jq -s -c --slurpfile starts "$starts" '
+    # A request that started but never finished was cut off by the stop and is kept as censored, and
+    # so is one that k6 ended with a transport error (status 0) after the stop was requested.
+    jq -s -c --slurpfile starts "$starts" --argjson stop "$stop_ms" '
       (map({(.probe_id): true}) | add // {}) as $done |
-      . + [$starts[] | select($done[.probe_id] | not) |
+      map(if $stop > 0 and .status == 0 and (.start_ms + (.duration_ms // 0)) >= $stop
+          then .verdict = "censored" | .censored_by = "stop" else . end) +
+      [$starts[] | select($done[.probe_id] | not) |
            {stream, probe_id, start_ms, verdict: "censored", status: null, duration_ms: null}] |
       sort_by(.start_ms)[]' "$finished" >"$out/probes-$role.jsonl"
     # Every request k6 counted must have a record, and every record a start; otherwise the log was
