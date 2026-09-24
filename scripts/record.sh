@@ -12,6 +12,7 @@ RUN_ID=
 RUN_DIR=
 RUN_PROVENANCE=
 CONTENTION_FILE=
+HOST_LOAD_FILE=
 CONTENTION_SAMPLER=
 CONTENTION_LIMIT=0.5
 
@@ -56,7 +57,9 @@ new_run() {
 }
 
 # The other project cluster's Kind node shares Docker Desktop's CPU. Every run samples its CPU every
-# 5 seconds, and write_run_json records the mean, so the report can exclude confounded runs.
+# 5 seconds, and write_run_json records the mean, so the report can exclude confounded runs. The
+# host's 1-minute load average is sampled too and recorded as evidence only: this run's own load
+# raises it, and the delivery checks already catch its effect on the apparatus.
 other_node_name() {
     if [[ "$CLUSTER" == shared ]]; then printf 'mtag-dedicated-control-plane'; else printf 'mtag-shared-control-plane'; fi
 }
@@ -72,27 +75,36 @@ start_contention_sampler() {
     stop_contention_sampler
     other=$(other_node_name)
     CONTENTION_FILE="$RUN_DIR/other-node-cpu.txt"
+    HOST_LOAD_FILE="$RUN_DIR/host-load.txt"
     : >"$CONTENTION_FILE"
+    : >"$HOST_LOAD_FILE"
     on_exit stop_contention_sampler
     (
         set +e
         while :; do
             docker_local stats --no-stream --format '{{.CPUPerc}}' "$other" 2>/dev/null | tr -d '%' >>"$CONTENTION_FILE"
+            sysctl -n vm.loadavg 2>/dev/null | awk '{ print $2 }' >>"$HOST_LOAD_FILE"
             sleep 5
         done
     ) &
     CONTENTION_SAMPLER=$!
 }
-# Prints {other_node, present, samples, mean_cpu, confounded}. A missing node counts as idle; a
-# present node with no samples leaves the verdict unknown (null), which the report excludes.
+# Prints {other_node, present, samples, mean_cpu, confounded, host_load}. A missing node counts as
+# idle; a present node with no samples leaves the verdict unknown (null), which the report excludes.
 contention_json() {
-    local present=false
+    local present=false host cpus
     if docker_local ps --format '{{.Names}}' | grep -Fxq "$(other_node_name)"; then present=true; fi
+    cpus=$(sysctl -n hw.ncpu 2>/dev/null || printf 'null')
+    host=$(awk '$1 ~ /^[0-9.]+$/ { print $1 }' "${HOST_LOAD_FILE:-/dev/null}" 2>/dev/null |
+        jq -s -c --argjson cpus "$cpus" '{samples: length, cpus: $cpus,
+          mean_1m: (if length == 0 then null else (add / length * 100 | round / 100) end), max_1m: max}')
     awk '$1 ~ /^[0-9.]+$/ { print $1 / 100 }' "${CONTENTION_FILE:-/dev/null}" 2>/dev/null |
-        jq -s -c --arg node "$(other_node_name)" --argjson present "$present" --argjson limit "$CONTENTION_LIMIT" '
+        jq -s -c --arg node "$(other_node_name)" --argjson present "$present" --argjson limit "$CONTENTION_LIMIT" \
+            --argjson host "$host" '
           (if length == 0 then null else (add / length * 100 | round / 100) end) as $mean |
           {other_node: $node, present: $present, samples: length, mean_cpu: $mean, limit_cpu: $limit,
-           confounded: (if ($present | not) then false elif $mean == null then null else $mean > $limit end)}'
+           confounded: (if ($present | not) then false elif $mean == null then null else $mean > $limit end),
+           host_load: $host}'
 }
 
 provenance_json() {

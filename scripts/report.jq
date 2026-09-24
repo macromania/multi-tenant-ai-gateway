@@ -73,7 +73,8 @@ def failure_section($name; $title; $explain):
       [range(0; 2) as $i | [$pairs[$i * 2], $pairs[$i * 2 + 1]]] |
       map(.[0] as $cluster | .[1] as $r |
         "**\($cluster)**" + (if $r == null then ": no usable run.\n" else
-          " (\(link($r))). Target: \($r.target.component // "n/a") (serves \($r.target.serves // "n/a")). Invocation: \($r.invocation.evidence).\n\n" +
+          " (\(link($r))). Target: \($r.target.component // "n/a") (serves \($r.target.serves // "n/a")). Invocation: \($r.invocation.evidence)." +
+          (if $r.contention.host_load.mean_1m != null then " Host load average during the run: \($r.contention.host_load.mean_1m) on \($r.contention.host_load.cpus) CPUs." else "" end) + "\n\n" +
           (if $r.config.attack_profile != null then
             calibration_for($r) as $cal |
             (if $cal == null then "_No usable calibration matches this workload profile and mock replica count._\n\n"
@@ -126,7 +127,7 @@ def selected_dirs:
 "- **Shared** (`mtag-shared`): one agentgateway, one controller and one proxy, serves every tenant. Tenants are entries in shared objects.\n" +
 "- **Dedicated** (`mtag-dedicated`): each tenant has its own complete agentgateway, controller and proxy, in its own namespace.\n\n" +
 "\"Separation\" means what namespaces and separate gateways give tenants that share a cluster. \"Isolation\" would mean a dedicated cluster per tenant, which this comparison does not test.\n\n" +
-"What the data cannot prove: both clusters run on one laptop, each on a single Kind node that shares Docker Desktop's CPU and memory; the upstream is a mock except for small Foundry smoke tests; token limits are local to each proxy; every proxy has one replica; probe timing precision is 200 ms (five requests per second); memory figures are the maximum of 5-second samples. Security limitations accepted for this proof of concept are listed in FINDINGS.md.\n\n" +
+"What the data cannot prove: both clusters run on one laptop, each on a single Kind node that shares Docker Desktop's CPU and memory; the upstream is a mock except for small Foundry smoke tests; token limits are local to each proxy; every proxy has one replica; probe timing precision is 200 ms (five requests per second); memory figures are the maximum of 5-second samples; other software on the host (such as device management or antivirus scans) competes for the same CPUs, and its effect is recorded as the host load average in each run but is not a gate. Security limitations accepted for this proof of concept are listed in FINDINGS.md.\n\n" +
 "A run of any kind is compared only if it used committed code that still matches the current implementation, passed its own validity checks, and was not confounded by load on the other cluster (whose Kind node must have averaged at most 0.5 CPU). A shared run and a dedicated run are compared only when their configuration fingerprints match: the same workload, windows, tenants, limits, and mock replicas. Excluded runs, and usable runs not shown in a section, are listed at the end.\n\n" +
 "Each run links to its record under `results/` and to the matching time range in Grafana. The Grafana links work only while that cluster and its Prometheus data still exist (Prometheus keeps 15 days).\n\n" +
 

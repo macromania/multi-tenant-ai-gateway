@@ -259,6 +259,11 @@ Prometheus query and its answer, and the Kubernetes events from the run window.
 - The upstream is a mock for every load test. Foundry is used only for smoke checks.
 - Token limits are local to each proxy, and every proxy has one replica.
 - Probe timing precision is 200 ms, and memory figures are the maximum of 5-second samples.
+- Other software on the host competes for the same CPUs. On this machine, device management
+  inventory scripts and antivirus scans raised the load average to about 10 on 10 CPUs and made the
+  calibration fail. Each run records the host's load average (`contention.host_load`) as evidence;
+  it is not a gate, because the run's own load raises it too. The campaign waits for the host to
+  settle before each step.
 - Shared provider quota exhaustion is not tested. Both designs sit in front of one deployment with
   10,000 tokens per minute, and local limits in separate proxies cannot cap their total.
 - Version and CRD upgrades are out of scope.

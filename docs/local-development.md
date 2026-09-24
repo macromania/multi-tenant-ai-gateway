@@ -258,7 +258,9 @@ its results. The mechanics:
 - Only one cluster is measured at a time. An experiment refuses to start while the other cluster
   runs a load Job. Every run record, including onboarding and offboarding, samples the other Kind
   node's CPU (`run.json` `contention`, samples in `other-node-cpu.txt`); the report excludes a run
-  where that node averaged more than 0.5 CPU, or whose samples are missing.
+  where that node averaged more than 0.5 CPU, or whose samples are missing. The host's 1-minute
+  load average is recorded the same way (`contention.host_load`, samples in `host-load.txt`) as
+  evidence, not as a gate.
 - Each run writes `results/<cluster>/<UTC time>-<kind>-<name>/`. `run.json` holds the Git commit,
   whether the inputs matched it at the start and the end, the input fingerprint (a SHA-256 over
   `Makefile`, `scripts/`, `deploy/`, `versions.env`, and `ports.env`, leaving out the report

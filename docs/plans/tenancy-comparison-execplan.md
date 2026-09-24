@@ -153,6 +153,9 @@ These facts were found while designing the plan, before any implementation. Each
 - Observation (Milestones 6 and 7): macOS `/bin/bash` 3.2 applies brace expansion to a double-quoted `{a,b}` inside `"$(...)"` when the substitution is a command argument (including `local x="$(...)"` and array elements), but not when it is assigned to a variable. Every Prometheus selector such as `{namespace=~"...",container!=""}` passed that way was split into several queries, and Prometheus rejected them without the scripts noticing, so the failure runs' per-pod resource figures and the first scale records were empty.
   Evidence: `/bin/bash -c 'f() { echo "[$1]"; }; printf "%s\n" "$(f "s{a,c}")"'` prints `[sa]` and `[sc]`; `x=$(f "s{a,c}")` keeps `s{a,c}`. `prom_instant` now requires exactly two arguments and fails when Prometheus does not answer "success", and every query result is assigned before use.
 
+- Observation (final campaign): other software on the host saturated the machine during the first campaign attempt. The Microsoft Intune agent ran inventory scripts (`find /Users -maxdepth 15 ...`) and Microsoft Defender scanned, which put the 1-minute load average at 8 to 11 on 10 CPUs. The latency and flood calibrations then failed in the shared cluster (40 and 6,495 dropped iterations; p99 411 and 160 ms), while at 17:05 the same latency calibration had passed with a p99 of 106 ms.
+  Evidence: `uptime` printed "load averages: 9.08 10.31 11.33"; `ps` showed the `find` processes' parent as `IntuneMdmDaemon`. The calibration gate rejected the runs, as designed.
+
 - Observation (Milestone 7): in `/bin/bash` 3.2, `set -e` does not apply inside a command substitution or inside a function called from an `if`, `||`, or `&&` context, so a failed measurement inside the first scale step still wrote a record of nulls.
   Evidence: `/bin/bash -c 'set -e; x=$(false; echo after); echo "[$x]"'` prints `[after]`. The measurement now runs as a plain command.
 
@@ -206,6 +209,10 @@ These facts were found while designing the plan, before any implementation. Each
 
 - Decision (Milestones 7 and 8): the report generator (`scripts/results.sh` and `scripts/report.jq`) is left out of the input fingerprint and the committed-inputs check. The scale sweep's CPU figures use a rate window equal to each sample's own window (60 seconds idle, 120 seconds under load).
   Rationale: the generator only reads run records, so changing it must not make every measurement stale; a 2-minute idle window would include the onboarding that just finished.
+  Date/Author: 2026-09-24, Copilot.
+
+- Decision (final campaign): every run also records the host's 1-minute load average, as evidence rather than a gate, and the campaign waits before each step until the host has settled (a 1-minute load average below 5 on 10 CPUs for three consecutive checks). The first campaign attempt was stopped and discarded.
+  Rationale: host load from device management cannot be controlled from this repository, and a gate would also reject the heavy runs whose own load raises it; calibration and per-run delivery checks already reject runs whose apparatus it degraded.
   Date/Author: 2026-09-24, Copilot.
 
 - Decision (Milestone 5 to 8 reviews): every run record, of every kind, samples the other Kind node's CPU and records a contention verdict, and every experiment adds the tenants, their limits, and the mock replicas at the start of the run to its configuration fingerprint. The report compares the latest pair of runs whose fingerprints match and accounts for every other run.
