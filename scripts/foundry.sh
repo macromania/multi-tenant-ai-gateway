@@ -367,7 +367,7 @@ provision() {
 }
 
 persist_config() {
-    local project_doc project_endpoint expected key client additions existing
+    local project_doc project_endpoint expected key additions
     new_temp; project_doc=$TEMP_FILE
     azure cognitiveservices account project show --name "$(saved account)" --resource-group "$(saved group)" \
         --project-name "$(saved project)" --output json >"$project_doc"
@@ -383,28 +383,14 @@ persist_config() {
         --query key1 --output tsv >"$key"
     jq -eRs 'rtrimstr("\n") | test("^[A-Za-z0-9+/=_-]{16,}$")' "$key" >/dev/null ||
         die "Azure key retrieval returned an invalid value."
-    new_temp; client=$TEMP_FILE
-    if [[ -f "$ROOT/.env" ]]; then
-        load_env
-        existing=$(jq -r '.AGENTGATEWAY_API_KEY // empty' "$ENV_JSON")
-    else
-        existing=
-    fi
-    if [[ -n "$existing" ]]; then
-        [[ "$existing" =~ ^[a-f0-9]{64}$ ]] || die "Existing local gateway key is invalid; it was not rotated."
-        printf '%s' "$existing" >"$client"
-    else
-        openssl rand -hex 32 | tr -d '\n' >"$client"
-    fi
     new_temp; additions=$TEMP_FILE
-    jq --arg endpoint "$project_endpoint" --arg local "http://127.0.0.1:$GATEWAY_PORT/v1" \
-        --rawfile key "$key" --rawfile client "$client" '{
+    jq --arg endpoint "$project_endpoint" --rawfile key "$key" '{
       AZURE_SUBSCRIPTION_ID:.subscription,AZURE_RESOURCE_GROUP:.group,AZURE_LOCATION:.region,
       AZURE_FOUNDRY_RESOURCE_NAME:.account,AZURE_FOUNDRY_PROJECT_NAME:.project,
       AZURE_FOUNDRY_PROJECT_ENDPOINT:$endpoint,AZURE_MODEL_BASE_URL:($endpoint+"/openai/v1"),
       AZURE_MODEL_DEPLOYMENT:.deployment,AZURE_MODEL_NAME:.model,AZURE_MODEL_VERSION:.version,
       AZURE_MODEL_SKU:.sku,AZURE_MODEL_CAPACITY:(.capacity|tostring),
-      AZURE_API_KEY:($key|rtrimstr("\n")),AGENTGATEWAY_BASE_URL:$local,AGENTGATEWAY_API_KEY:$client
+      AZURE_API_KEY:($key|rtrimstr("\n"))
     }' "$RECORD" >"$additions"
     save_env "$additions"
     ok 'Saved protected configuration to .env (credentials are not displayed)'
@@ -415,7 +401,7 @@ validate_connection() {
     [[ "$(saved phase)" == provisioned || "$(saved phase)" == configured ]] ||
         die "The recorded Foundry generation has not been provisioned or has been retired."
     load_env
-    jq -e --slurpfile state "$RECORD" --arg local "http://127.0.0.1:$GATEWAY_PORT/v1" '
+    jq -e --slurpfile state "$RECORD" '
       .AZURE_SUBSCRIPTION_ID==$state[0].subscription and
       .AZURE_RESOURCE_GROUP==$state[0].group and .AZURE_LOCATION==$state[0].region and
       .AZURE_FOUNDRY_RESOURCE_NAME==$state[0].account and
@@ -423,84 +409,71 @@ validate_connection() {
       .AZURE_MODEL_DEPLOYMENT==$state[0].deployment and
       .AZURE_MODEL_NAME==$state[0].model and .AZURE_MODEL_VERSION==$state[0].version and
       .AZURE_MODEL_SKU==$state[0].sku and .AZURE_MODEL_CAPACITY==($state[0].capacity|tostring) and
-      .AGENTGATEWAY_BASE_URL==$local and
       .AZURE_FOUNDRY_PROJECT_ENDPOINT==("https://"+$state[0].account+".services.ai.azure.com/api/projects/"+$state[0].project) and
       .AZURE_MODEL_BASE_URL==(.AZURE_FOUNDRY_PROJECT_ENDPOINT+"/openai/v1") and
-      (.AZURE_API_KEY | test("^[A-Za-z0-9+/=_-]{16,}$")) and
-      (.AGENTGATEWAY_API_KEY | test("^[a-f0-9]{64}$"))
+      (.AZURE_API_KEY | test("^[A-Za-z0-9+/=_-]{16,}$"))
     ' "$ENV_JSON" >/dev/null || die ".env and the owned deployment record disagree. No gateway configuration was applied."
 }
 
-wait_config() {
-    local resource=$1 style=$2 condition=$3 attempt document
-    for ((attempt=0; attempt<60; attempt++)); do
-        document=$(kube -n "$NAMESPACE" get "$resource" -o json)
-        if jq -e --arg style "$style" --arg condition "$condition" --arg gateway "$GATEWAY" '
-          .metadata.generation as $generation |
-          (if $style=="policy" then
-            [.status.ancestors[]? | select(.ancestorRef.name==$gateway) | .conditions[]?]
-           elif $style=="route" then
-            [.status.parents[]? | select(.parentRef.name==$gateway) | .conditions[]?]
-           else [.status.conditions[]?] end) |
-          any(.[]; .type==$condition and .status=="True" and
-            (.observedGeneration==null or .observedGeneration==$generation))
-        ' <<<"$document" >/dev/null; then return; fi
-        sleep 2
-    done
-    jq .status <<<"$document" >&2
-    die "$resource has no current $condition=True condition."
+# Applies the Foundry provider Secret, backend, and route to one gateway namespace, but only
+# after confirming that the gateway rejects requests without a valid tenant key.
+configure_namespace() {
+    local namespace=$1 invalid_header secret manifest
+    wait_status "$namespace" agentgatewaypolicy/tenant-auth policy Accepted
+    start_forward "$REQUEST_PORT" "$namespace" "service/$GATEWAY" 80
+    http_call "http://127.0.0.1:$REQUEST_PORT/v1/chat/completions"
+    [[ "$HTTP_STATUS" == 401 ]] || die "$namespace: strict authentication is not enforced. The paid route was not applied."
+    new_temp; invalid_header=$TEMP_FILE
+    printf 'Authorization: Bearer invalid-%s\n' "$(openssl rand -hex 8)" >"$invalid_header"
+    http_call "http://127.0.0.1:$REQUEST_PORT/v1/chat/completions" "$invalid_header"
+    [[ "$HTTP_STATUS" == 401 ]] || die "$namespace: an invalid key was accepted. The paid route was not applied."
+    stop_forward
+    new_temp; secret=$TEMP_FILE
+    jq --arg namespace "$namespace" '{apiVersion:"v1",kind:"Secret",type:"Opaque",
+      metadata:{name:"foundry-provider",namespace:$namespace},
+      stringData:{Authorization:.AZURE_API_KEY}}' "$ENV_JSON" >"$secret"
+    kube_apply -f "$secret" >/dev/null
+    new_temp; manifest=$TEMP_FILE
+    sed -e "s/@RESOURCE@/$(saved account)/g" -e "s/@PROJECT@/$(saved project)/g" \
+        -e "s/@DEPLOYMENT@/$(saved deployment)/g" -e "s/@NAMESPACE@/$namespace/g" \
+        "$ROOT/deploy/agentgateway/foundry.yaml.tmpl" >"$manifest"
+    kube_apply -f "$manifest" >/dev/null
+    wait_status "$namespace" agentgatewaybackend/foundry-model plain Accepted
+    wait_status "$namespace" httproute/foundry-chat route Accepted
+    wait_status "$namespace" httproute/foundry-chat route ResolvedRefs
+    ok "$namespace: Foundry route configured behind tenant authentication"
 }
 
 gateway_configure() {
     validate_connection
     verify_context
-    section 'CONFIGURING THE FOUNDRY CONNECTION'
-    local hash_record digest secret manifest invalid_header
-    # Removing the route first prevents an authentication update from briefly exposing a paid path.
-    kube -n "$NAMESPACE" delete httproute foundry-chat --ignore-not-found
-    new_temp; hash_record=$TEMP_FILE
-    digest=$(config AGENTGATEWAY_API_KEY | tr -d '\n' | openssl dgst -sha256 | awk '{print $NF}')
-    jq -n --arg hash "sha256:$digest" '{keyHash:$hash}' >"$hash_record"
-    kube -n "$NAMESPACE" create configmap local-client-keys --from-file="api-key=$hash_record" \
-        --dry-run=client -o json | jq '.metadata.labels={"gateway.dev/component":"local-client"}' |
-        kube apply --server-side -f -
-    kube apply -f "$ROOT/deploy/agentgateway/auth.yaml"
-    wait_config agentgatewaypolicy/local-client-auth policy Accepted
-    start_forward "$REQUEST_PORT"
-    http_call "http://127.0.0.1:$REQUEST_PORT/v1/chat/completions"
-    [[ "$HTTP_STATUS" == 401 ]] || die "Strict authentication is not enforced. The paid route remains removed."
-    new_temp; invalid_header=$TEMP_FILE
-    printf 'Authorization: Bearer invalid-development-key\n' >"$invalid_header"
-    http_call "http://127.0.0.1:$REQUEST_PORT/v1/chat/completions" "$invalid_header"
-    [[ "$HTTP_STATUS" == 401 ]] || die "An invalid client key was accepted. The paid route remains removed."
-    gateway_header
-    http_call "http://127.0.0.1:$REQUEST_PORT/__gateway_unmatched__" "$HEADER_FILE"
-    [[ "$HTTP_STATUS" == 404 ]] || die "The valid local client key was not accepted."
-    new_temp; secret=$TEMP_FILE
-    jq '{apiVersion:"v1",kind:"Secret",metadata:{name:"foundry-provider",namespace:"agentgateway-system"},
-      type:"Opaque",stringData:{Authorization:.AZURE_API_KEY}}' "$ENV_JSON" >"$secret"
-    kube apply --server-side -f "$secret"
-    new_temp; manifest=$TEMP_FILE
-    sed -e "s/@RESOURCE@/$(saved account)/g" -e "s/@PROJECT@/$(saved project)/g" \
-        -e "s/@DEPLOYMENT@/$(saved deployment)/g" \
-        "$ROOT/deploy/agentgateway/foundry.yaml.tmpl" >"$manifest"
-    kube apply -f "$manifest"
-    wait_config agentgatewaybackend/foundry-model backend Accepted
-    wait_config httproute/foundry-chat route Accepted
-    wait_config httproute/foundry-chat route ResolvedRefs
+    section "FOUNDRY CONNECTION | $KIND_CLUSTER"
+    local namespaces namespace
+    namespaces=$(gateway_namespaces)
+    if [[ -z "$namespaces" ]]; then
+        ok 'No tenant gateways exist yet; each new tenant receives the connection when it is added'
+    fi
+    for namespace in $namespaces; do configure_namespace "$namespace"; done
     phase configured
-    ok 'Provider, client authentication, and chat route are configured'
-    info 'No model request was made. Next: make prompt PROMPT="Hello"'
+    info "No model request was made. Next: make prompt CLUSTER=$CLUSTER TENANT=<tenant> PROMPT=\"Hello\""
 }
 
 endpoints() {
     validate_connection
-    section 'SERVICE URLS'
-    info "Gateway: $(config AGENTGATEWAY_BASE_URL)"
+    verify_context
+    section "SERVICE URLS | $KIND_CLUSTER"
     info "Foundry project: $(config AZURE_FOUNDRY_PROJECT_ENDPOINT)"
     info "Foundry inference: $(config AZURE_MODEL_BASE_URL)"
     info "Deployment: $(config AZURE_MODEL_DEPLOYMENT)"
-    info 'Gateway access: make gateway-forward. The local and Azure API keys are different.'
+    local namespace
+    for namespace in $(gateway_namespaces); do
+        if [[ "$CLUSTER" == shared ]]; then
+            info "Gateway for every tenant: make gateway-forward CLUSTER=shared -> http://127.0.0.1:$GATEWAY_PORT/v1"
+        else
+            info "Gateway for $namespace: make gateway-forward CLUSTER=dedicated TENANT=$namespace -> http://127.0.0.1:$GATEWAY_PORT/v1"
+        fi
+    done
+    info 'Each tenant uses its own key from .env.tenants. The tenant and Azure keys are different.'
 }
 
 remove_env_connection() {
@@ -517,21 +490,28 @@ remove_env_connection() {
     mv -f -- "$result" "$ROOT/.env"
 }
 
+remove_cluster_connection() {
+    CLUSTER=$1
+    select_cluster
+    cluster_exists || return 0
+    verify_context
+    local namespace
+    for namespace in $(gateway_namespaces); do
+        kube -n "$namespace" delete httproute foundry-chat --ignore-not-found
+        kube -n "$namespace" delete agentgatewaybackend foundry-model --ignore-not-found
+        kube -n "$namespace" delete secret foundry-provider --ignore-not-found
+    done
+}
+
 cleanup_connection() {
     validate_record
     [[ "$(saved phase)" == cloud-deleted ]] || die "Cloud deletion has not been confirmed."
-    section 'REMOVING THE RETIRED LOCAL CONNECTION'
-    if cluster_exists; then
-        verify_context
-        kube -n "$NAMESPACE" delete httproute foundry-chat --ignore-not-found
-        kube -n "$NAMESPACE" delete agentgatewaybackend foundry-model --ignore-not-found
-        kube -n "$NAMESPACE" delete secret foundry-provider --ignore-not-found
-        kube -n "$NAMESPACE" delete agentgatewaypolicy local-client-auth --ignore-not-found
-        kube -n "$NAMESPACE" delete configmap local-client-keys --ignore-not-found
-    fi
+    section 'REMOVING THE RETIRED FOUNDRY CONNECTION'
+    local target
+    for target in shared dedicated; do (remove_cluster_connection "$target"); done
     remove_env_connection
     phase deleted
-    ok 'Removed the retired connection and its managed credentials'
+    ok 'Removed the retired connection from every project cluster and its managed credentials'
 }
 
 gateway_restore() {
@@ -593,8 +573,6 @@ cloud_down() {
 }
 
 foundry_up() {
-    verify_context
-    kube -n "$NAMESPACE" rollout status "deployment/$GATEWAY" --timeout=300s
     if [[ -f "$RECORD" && "$(saved phase)" == cloud-deleted ]]; then cleanup_connection; fi
     azure_context
     require_registered
@@ -615,8 +593,9 @@ foundry_up() {
     fi
     provision
     persist_config
-    gateway_configure
-    endpoints
+    section 'NEXT STEPS'
+    info 'The model is deployed. No gateway was changed and no model request was made.'
+    info 'Connect each cluster: make gateway-configure CLUSTER=shared (or dedicated, or both)'
 }
 
 case "${1:-}" in
@@ -624,9 +603,9 @@ case "${1:-}" in
     foundry-regions) azure_context; read_regions; show_regions ;;
     foundry-models) azure_context; discover_models ;;
     foundry-up) foundry_up ;;
-    gateway-configure) gateway_configure ;;
-    gateway-restore) gateway_restore ;;
-    endpoints) endpoints ;;
+    gateway-configure) select_cluster_or_both foundry.sh "$@"; gateway_configure ;;
+    gateway-restore) select_cluster; gateway_restore ;;
+    endpoints) select_cluster_or_both foundry.sh "$@"; endpoints ;;
     foundry-status)
         azure_context; validate_record
         section 'OWNED FOUNDRY DEPLOYMENT'

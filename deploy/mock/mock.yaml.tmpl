@@ -1,0 +1,115 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mock-upstream
+  labels:
+    gateway.dev/component: mock-upstream
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock
+  namespace: mock-upstream
+  labels:
+    app.kubernetes.io/name: mock
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mock
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mock
+      annotations:
+        gateway.dev/server-sha256: "@SERVER_SHA@"
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mock
+          image: "@PYTHON_IMAGE@"
+          command: ["python", "/app/server.py"]
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          ports:
+            - name: api
+              containerPort: 8080
+            - name: metrics
+              containerPort: 8081
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: api
+            periodSeconds: 5
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: api
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 500m
+              memory: 128Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: server
+              mountPath: /app
+              readOnly: true
+            - name: keys
+              mountPath: /etc/mock
+              readOnly: true
+      volumes:
+        - name: server
+          configMap:
+            name: mock-server
+        - name: keys
+          secret:
+            secretName: mock-upstream-keys
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock
+  namespace: mock-upstream
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: mock
+  ports:
+    - name: api
+      port: 8080
+      targetPort: api
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: mock
+  namespace: mock-upstream
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mock
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 5s

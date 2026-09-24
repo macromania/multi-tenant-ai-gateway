@@ -1,8 +1,9 @@
+# Strict API key authentication before routing. With no tenant keys, every request gets 401.
 apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayPolicy
 metadata:
-  name: local-client-auth
-  namespace: agentgateway-system
+  name: tenant-auth
+  namespace: "@NAMESPACE@"
 spec:
   targetRefs:
     - group: gateway.networking.k8s.io
@@ -14,4 +15,4 @@ spec:
       mode: Strict
       configMapSelector:
         matchLabels:
-          gateway.dev/component: local-client
+          gateway.dev/component: tenant-key

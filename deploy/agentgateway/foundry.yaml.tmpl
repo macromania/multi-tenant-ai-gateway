@@ -2,7 +2,7 @@ apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayBackend
 metadata:
   name: foundry-model
-  namespace: agentgateway-system
+  namespace: "@NAMESPACE@"
 spec:
   ai:
     provider:
@@ -21,7 +21,7 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: foundry-chat
-  namespace: agentgateway-system
+  namespace: "@NAMESPACE@"
 spec:
   parentRefs:
     - name: agentgateway-proxy

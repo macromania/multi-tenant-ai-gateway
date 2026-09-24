@@ -1,0 +1,120 @@
+# kube-prometheus-stack values: Prometheus, the operator, Grafana, and kube-state-metrics.
+# Alertmanager, node-exporter, default rules, and control-plane scrapes Kind does not expose are off.
+fullnameOverride: monitoring
+cleanPrometheusOperatorObjectNames: true
+
+defaultRules:
+  create: false
+alertmanager:
+  enabled: false
+nodeExporter:
+  enabled: false
+windowsMonitoring:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeProxy:
+  enabled: false
+coreDns:
+  enabled: false
+kubeApiServer:
+  enabled: false
+
+kubelet:
+  enabled: true
+  serviceMonitor:
+    interval: 5s
+    cAdvisor: true
+    probes: false
+    resource: false
+
+kubeStateMetrics:
+  enabled: true
+kube-state-metrics:
+  fullnameOverride: kube-state-metrics
+  prometheus:
+    monitor:
+      interval: 5s
+
+prometheusOperator:
+  fullnameOverride: prometheus-operator
+  admissionWebhooks:
+    enabled: false
+  tls:
+    enabled: false
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+prometheus:
+  service:
+    type: ClusterIP
+  prometheusSpec:
+    scrapeInterval: 15s
+    evaluationInterval: 30s
+    retention: 15d
+    enableRemoteWriteReceiver: true
+    enableFeatures:
+      - native-histograms
+    scrapeClassicHistograms: true
+    scrapeNativeHistograms: true
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: "2"
+        memory: 2Gi
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
+
+grafana:
+  enabled: true
+  fullnameOverride: grafana
+  defaultDashboardsEnabled: false
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  service:
+    type: ClusterIP
+  grafana.ini:
+    auth.anonymous:
+      enabled: true
+      org_role: Viewer
+    analytics:
+      reporting_enabled: false
+      check_for_updates: false
+      check_for_plugin_updates: false
+    users:
+      allow_sign_up: false
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi

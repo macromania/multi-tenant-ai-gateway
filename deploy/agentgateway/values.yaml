@@ -1,3 +1,4 @@
+# The one agentgateway controller in the shared cluster.
 controller:
   replicaCount: 1
   xds:
@@ -14,3 +15,15 @@ resources:
   limits:
     cpu: "1"
     memory: 512Mi
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 5s
+  proxy:
+    podMonitor:
+      enabled: true
+    gatewayClassNames:
+      - agentgateway
+  grafanaDashboard:
+    enabled: false
