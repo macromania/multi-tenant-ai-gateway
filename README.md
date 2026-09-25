@@ -94,6 +94,7 @@ make foundry-down CONFIRM=1
 
 - [Comparison guide](docs/tenancy-comparison.md): the two designs, every experiment, and how to read the results.
 - [Results](results/report.md): the report written by `make results`.
+- [ADR 0001](docs/adr/0001-multi-tenant-gateway-design.md): the proposed decision record that lays out the options and this evidence for reviewers.
 - [Development guide](docs/local-development.md): prerequisites, ports, state, safety boundaries.
 - [Implementation plan](docs/plans/tenancy-comparison-execplan.md): the living plan and its decisions.
 - [Review findings](FINDINGS.md): what each review found and what was done about it.

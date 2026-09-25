@@ -3,7 +3,8 @@
 This guide explains the two multi-tenancy designs this repository builds, what each experiment does
 to them, and how to read the results. The numbers themselves are in
 [results/report.md](../results/report.md), which `make results` writes from the run records. This
-guide does not choose a design. The report is one input to a later architecture decision.
+guide does not choose a design. The report is one input to a later architecture decision, which
+[ADR 0001](adr/0001-multi-tenant-gateway-design.md) sets out for reviewers.
 
 Two words have fixed meanings here. **Separation** is what namespaces and separate gateways give
 tenants that share one cluster. **Isolation** would mean a dedicated cluster for each tenant, which
