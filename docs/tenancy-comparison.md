@@ -260,9 +260,8 @@ Prometheus query and its answer, and the Kubernetes events from the run window.
 - The upstream is a mock for every load test. Foundry is used only for smoke checks.
 - Token limits are local to each proxy, and every proxy has one replica.
 - Probe timing precision is 200 ms, and memory figures are the maximum of 5-second samples.
-- Other software on the host competes for the same CPUs. On this machine, device management
-  inventory scripts and antivirus scans raised the load average to about 10 on 10 CPUs and made the
-  calibration fail. Each run records the host's load average (`contention.host_load`) as evidence;
+- Other software on the host competes for the same CPUs. On the measuring machine, it raised the
+  load average to about 10 on 10 CPUs and made the calibration fail. Each run records the host's load average (`contention.host_load`) as evidence;
   it is not a gate, because the run's own load raises it too. The campaign waited up to 15 minutes
   before each step for the host to settle, a best-effort wait: some runs still averaged a load of
   11 to 16 on 10 CPUs. A valid run proves the apparatus delivered its workload, not that host load

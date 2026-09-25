@@ -215,8 +215,7 @@ Prometheus data exist.
 * Both designs ran on one laptop, each on a single Kind node sharing Docker Desktop's CPU and memory.
   Absolute numbers do not transfer to production hardware; compare the designs with each other.
 * Most figures come from one run each; there is no measure of variance.
-* Other software on the host (device management inventory scripts and antivirus scans) competed for
-  the CPUs. Host load averaged between about 4 and 16 on 10 CPUs during failure runs. Every run passed
+* Other software on the host competed for the CPUs. Host load averaged between about 4 and 16 on 10 CPUs during failure runs. Every run passed
   its delivery checks, but host load may have biased timings; the report shows it beside every timing.
 * The upstream was a mock for every load test; Foundry was used only for smoke checks.
 * Every proxy had one replica, and token limits are local to each proxy.

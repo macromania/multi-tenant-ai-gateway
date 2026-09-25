@@ -16,6 +16,9 @@ architecture decision; this repository does not choose a design.
 "Separation" here means what namespaces and separate gateways give tenants that share a cluster.
 "Isolation" means a dedicated cluster per tenant, which is out of scope.
 
+**Status:** a proof of concept for local development and measurement. It is not hardened for
+production use; see [SECURITY.md](SECURITY.md) for its known limitations.
+
 ## Start locally
 
 Start Docker Desktop, then:
@@ -98,3 +101,27 @@ make foundry-down CONFIRM=1
 - [Development guide](docs/local-development.md): prerequisites, ports, state, safety boundaries.
 - [Implementation plan](docs/plans/tenancy-comparison-execplan.md): the living plan and its decisions.
 - [Review findings](FINDINGS.md): what each review found and what was done about it.
+- [Contributing](CONTRIBUTING.md) and [security policy](SECURITY.md).
+
+## Third-party software
+
+This repository contains only its own scripts, templates, and documents. The software it runs is
+downloaded when you use it and stays under its own licence:
+
+| Component | How it is used | Licence |
+| --- | --- | --- |
+| [agentgateway](https://github.com/agentgateway/agentgateway) | controller and proxy images and Helm charts, installed by `make up` | Apache-2.0 |
+| [Gateway API](https://github.com/kubernetes-sigs/gateway-api) | CRDs downloaded from its release | Apache-2.0 |
+| [Kind](https://github.com/kubernetes-sigs/kind) and its node image (Kubernetes) | local clusters | Apache-2.0 |
+| [kube-prometheus-stack](https://github.com/prometheus-community/helm-charts) | Helm chart for Prometheus, Prometheus Operator, kube-state-metrics, and Grafana with its dashboard sidecar | Apache-2.0 (chart and Prometheus components); Grafana is AGPL-3.0; the k8s-sidecar image is MIT |
+| [k6](https://github.com/grafana/k6) | load generator image; `deploy/k6/chat.js` is an original script it runs | AGPL-3.0 |
+| [Python](https://www.python.org/) image | runs the original mock upstream in `deploy/mock/server.py` | PSF License (the image also contains Debian packages under their own licences) |
+| Docker Desktop, kubectl, Helm, jq, curl, OpenSSL, Azure CLI, K9s | host tools you install yourself | their own licences |
+
+No third-party source code is copied into this repository, and none of the images above is
+modified or redistributed by it. agentgateway, Kubernetes, Grafana, k6, Microsoft Foundry, Azure,
+and Docker are trademarks of their owners; this project is not affiliated with or endorsed by them.
+
+## Licence
+
+[MIT](LICENSE). Copyright (c) 2026 Mahmut Canga.
